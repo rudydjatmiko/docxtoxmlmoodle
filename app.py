@@ -2,18 +2,17 @@ import streamlit as st
 from docx import Document
 import re
 import base64
-import io
 
-# --- 1. FUNGSI LOGIKA (BACKEND) ---
+# --- 1. FUNGSI PENDUKUNG (BACKEND) ---
 
 def wrap_arabic(text):
-    """Membungkus teks Arab dengan styling khusus Moodle."""
+    """Mendeteksi teks Arab dan memberikan styling font besar."""
     if not text: return ""
     arabic_pattern = re.compile(r'([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)')
     return arabic_pattern.sub(r'<span dir="rtl" style="font-family: \'Traditional Arabic\', serif; font-size: 30px; line-height: 1.8;">\1</span>', text)
 
 def get_images_from_docx(doc):
-    """Mengekstrak gambar dan objek grafis (rumus) dari docx."""
+    """Mengekstrak gambar dari file docx."""
     images = []
     for rel in doc.part.rels.values():
         if "image" in rel.target_ref:
@@ -21,20 +20,17 @@ def get_images_from_docx(doc):
                 img_data = rel.target_part.blob
                 img_base64 = base64.b64encode(img_data).decode('utf-8')
                 images.append(img_base64)
-            except:
-                continue
+            except: continue
     return images
 
 def convert_docx_to_moodle_xml(docx_file):
-    """Fungsi utama konversi dengan penghitung statistik."""
+    """Fungsi inti konversi dengan logika deteksi otomatis."""
     doc = Document(docx_file)
     all_images = get_images_from_docx(doc)
     lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
     
     xml_header = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     questions_xml = ""
-    
-    # Inisialisasi Statistik
     stats = {"PG": 0, "MCS": 0, "Essay": 0, "Gambar": 0}
     
     q_num = 1
@@ -44,8 +40,8 @@ def convert_docx_to_moodle_xml(docx_file):
     while i < len(lines):
         line = lines[i]
 
-        # A. DETEKSI ESSAY (Berhenti memproses PG jika menemukan kata kunci Essay)
-        if "Berdasarkan kisah" in line or "Tuliskan terjemahan" in line or line.upper() == "ESSAY":
+        # A. DETEKSI ESSAY
+        if line.upper() == "ESSAY" or "KERJEKAN SOAL BERIKUT" in line.upper():
             if line.upper() == "ESSAY": i += 1
             essay_content = wrap_arabic("<br/>".join(lines[i:]))
             questions_xml += f"""
@@ -60,7 +56,7 @@ def convert_docx_to_moodle_xml(docx_file):
             stats["Essay"] += 1
             break 
 
-        # B. DETEKSI PILIHAN GANDA (Bukan header dan bukan kunci jawaban)
+        # B. DETEKSI PILIHAN GANDA / MULTIPLE RESPONSE
         if not line.upper().startswith("ANS:") and not line.isupper():
             q_text = wrap_arabic(line)
             
@@ -70,7 +66,7 @@ def convert_docx_to_moodle_xml(docx_file):
             if re.search(r'\[(Image|GAMBAR|RUMUS)\]', line, re.IGNORECASE) and img_idx < len(all_images):
                 img_data = all_images[img_idx]
                 img_name = f"img_{q_num}.png"
-                img_tag = f'<p><img src="@@PLUGINFILE@@/{img_name}" alt="visual"/></p>'
+                img_tag = f'<p><img src="@@PLUGINFILE@@/{img_name}"/></p>'
                 file_tag = f'<file name="{img_name}" path="/" encoding="base64">{img_data}</file>'
                 img_idx += 1
                 stats["Gambar"] += 1
@@ -78,7 +74,7 @@ def convert_docx_to_moodle_xml(docx_file):
 
             i += 1
             choices = []
-            ans_key = "A"
+            ans_key = ""
             
             # Ambil Pilihan Jawaban
             while i < len(lines):
@@ -87,27 +83,34 @@ def convert_docx_to_moodle_xml(docx_file):
                     i += 1
                     break
                 else:
-                    # Bersihkan label manual A. B. agar tidak dobel
-                    clean_choice = re.sub(r'^[A-E][\.:\)]\s*', '', lines[i])
-                    choices.append(clean_choice)
+                    # Bersihkan label A. B. C. manual
+                    choices.append(re.sub(r'^[A-E][\.:\)]\s*', '', lines[i]))
                     i += 1
             
-            # Tentukan Tipe Soal (Khusus 23-25 sebagai MCS)
-            is_mcs = 23 <= q_num <= 25
+            # LOGIKA DETEKSI TIPE SOAL (CERDAS)
+            # Jika ada koma di kunci (A,B) atau kata "Pilih" di soal, maka MCS
+            is_mcs = "," in ans_key or "PILIH" in q_text.upper()
             q_type = "multichoiceset" if is_mcs else "multichoice"
             
             if is_mcs: stats["MCS"] += 1
             else: stats["PG"] += 1
             
-            # Bangun XML Per Soal
+            # Bangun XML
             current_q = f'  <question type="{q_type}">\n'
             current_q += f'    <name><text>Soal {q_num:02d}</text></name>\n'
             current_q += f'    <questiontext format="html">\n      <text><![CDATA[<p>{q_text}</p>{img_tag}]]></text>\n      {file_tag}\n    </questiontext>\n'
-            current_q += f'    <single>{"true" if q_type=="multichoice" else "false"}</single>\n    <shuffleanswers>true</shuffleanswers>\n    <answernumbering>abc</answernumbering>\n'
+            current_q += f'    <single>{"false" if is_mcs else "true"}</single>\n    <shuffleanswers>true</shuffleanswers>\n    <answernumbering>abc</answernumbering>\n'
             
+            # Proses Jawaban
             for idx, c_text in enumerate(choices):
                 label = chr(65 + idx)
-                fraction = "100" if label in ans_key else "0"
+                if is_mcs:
+                    correct_list = [x.strip() for x in ans_key.split(',')]
+                    # Skor dibagi rata untuk jawaban benar
+                    fraction = str(100 // len(correct_list)) if label in correct_list else "0"
+                else:
+                    fraction = "100" if label == ans_key else "0"
+                
                 current_q += f'    <answer fraction="{fraction}" format="html">\n      <text><![CDATA[{wrap_arabic(c_text)}]]></text>\n      <feedback><text></text></feedback>\n    </answer>\n'
             
             current_q += '  </question>\n'
@@ -118,54 +121,49 @@ def convert_docx_to_moodle_xml(docx_file):
             
     return xml_header + questions_xml + '</quiz>', stats
 
-# --- 3. TAMPILAN ANTARMUKA (STREAMLIT UI) ---
+# --- 2. TAMPILAN ANTARMUKA (UI STREAMLIT) ---
 
-st.set_page_config(page_title="Moodle Converter Pro", page_icon="🕋", layout="centered")
+st.set_page_config(page_title="Moodle Converter Pro", page_icon="📝")
 
-st.title("🕋 Moodle XML Converter Pro")
-st.markdown("""
-Ubah file Word soal Anda menjadi format XML Moodle secara instan. 
-Pastikan file Anda mengikuti format **Ans: A** untuk kunci jawaban.
-""")
+st.title("📝 Moodle XML Converter Pro")
+st.markdown("Konversi soal .docx Anda ke Moodle XML secara akurat dan otomatis.")
 
-uploaded_file = st.file_uploader("Pilih file soal .docx", type=["docx"])
+uploaded_file = st.file_uploader("Upload file soal .docx", type=["docx"])
 
 if uploaded_file:
-    # Nama file dinamis: ganti .docx menjadi .xml
-    nama_file_asli = uploaded_file.name
-    nama_file_xml = re.sub(r'\.docx$', '.xml', nama_file_asli, flags=re.IGNORECASE)
-    if not nama_file_xml.endswith('.xml'): nama_file_xml += '.xml'
+    # Dinamisasi Nama File
+    nama_xml = re.sub(r'\.docx$', '.xml', uploaded_file.name, flags=re.IGNORECASE)
+    if not nama_xml.endswith('.xml'): nama_xml += '.xml'
 
-    with st.spinner('Menganalisis dokumen...'):
+    with st.spinner('Menganalisis file...'):
         try:
             hasil_xml, statistik = convert_docx_to_moodle_xml(uploaded_file)
             
-            # DASHBOARD KONFIRMASI
-            st.success(f"✅ Berhasil memproses: {nama_file_asli}")
+            st.success(f"Berhasil memproses: {uploaded_file.name}")
             
+            # Dashboard Statistik
             st.subheader("📊 Ringkasan Konversi")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Soal", sum([statistik["PG"], statistik["MCS"], statistik["Essay"]]))
+            c1.metric("Total Soal", statistik["PG"] + statistik["MCS"] + statistik["Essay"])
             c2.metric("Pilihan Ganda", statistik["PG"])
-            c3.metric("Multi-Respon", statistik["MCS"])
+            c3.metric("Multi-Response", statistik["MCS"])
             c4.metric("Essay", statistik["Essay"])
             
             if statistik["Gambar"] > 0:
-                st.info(f"🎨 Terdeteksi **{statistik['Gambar']}** gambar/rumus dalam dokumen.")
+                st.info(f"🖼️ Terdeteksi {statistik['Gambar']} gambar/rumus.")
 
             st.divider()
 
-            # TOMBOL DOWNLOAD DINAMIS
+            # Tombol Download
             st.download_button(
-                label=f"📥 DOWNLOAD {nama_file_xml.upper()}", 
+                label=f"📥 DOWNLOAD {nama_xml.upper()}", 
                 data=hasil_xml, 
-                file_name=nama_file_xml, 
+                file_name=nama_xml, 
                 mime="text/xml",
                 use_container_width=True
             )
             
         except Exception as e:
-            st.error(f"Terjadi kesalahan saat mengonversi: {e}")
+            st.error(f"Gagal mengonversi: {e}")
 
-st.divider()
-st.caption("Tips: Jika gambar tidak muncul, pastikan Anda menuliskan tag [GAMBAR] di dalam teks soal di Word.")
+st.caption("Pastikan format kunci jawaban menggunakan 'Ans: A' atau 'Ans: A,B,C'.")
