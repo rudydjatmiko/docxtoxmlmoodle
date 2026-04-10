@@ -121,8 +121,8 @@ st.set_page_config(page_title="Konverter Moodle", page_icon="🕌")
 st.title("🕌 Konverter Word ke Moodle (Support Gambar)")
 st.markdown("""
 ### Cara Penggunaan:
-1. Pastikan setiap soal diikuti pilihan jawaban (A, B, C, D, E).
-2. Tulis **Ans: [Kunci]** di bawah pilihan.
+1. Pastikan setiap soal ditulis dalam format yang benar. type soal yang berlaku: multiple choice, multiple choice set, dan essay
+2. Tulis "Ans: [Kunci]" di diakhir soal.
 3. **Penting:** Jika soal memiliki gambar, ketik teks `[GAMBAR]` di dalam kalimat soalnya agar sistem tahu di mana harus meletakkan gambar tersebut.
 """)
 
