@@ -4,27 +4,31 @@ import re
 import base64
 import io
 
-# Fungsi untuk membungkus teks Arab dengan style 30px
+# 1. Fungsi untuk membungkus teks Arab dengan style 30px
 def wrap_arabic(text):
     if not text: return ""
     # Range unicode untuk karakter Arab
     arabic_pattern = re.compile(r'([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)')
     return arabic_pattern.sub(r'<span dir="rtl" style="font-family: \'Traditional Arabic\', serif; font-size: 30px; line-height: 1.8;">\1</span>', text)
 
+# 2. Fungsi Ekstraksi Gambar (Termasuk Persamaan yang dianggap Grafik oleh Word)
 def get_images_from_docx(doc):
-    """Mengekstrak gambar dari dokumen Word dan menyimpannya dalam dictionary."""
+    """Mengekstrak gambar dan objek grafik dari dokumen Word."""
     images = []
-    # Mengakses blok relasi dokumen untuk mengambil data gambar
+    # Mengakses semua relasi dokumen yang bertipe image
     for rel in doc.part.rels.values():
         if "image" in rel.target_ref:
-            img_data = rel.target_part.blob
-            img_base64 = base64.b64encode(img_data).decode('utf-8')
-            images.append(img_base64)
+            try:
+                img_data = rel.target_part.blob
+                img_base64 = base64.b64encode(img_data).decode('utf-8')
+                images.append(img_base64)
+            except:
+                continue
     return images
 
 def convert_docx_to_moodle_xml(docx_file):
     doc = Document(docx_file)
-    # Ambil semua gambar yang ada di file Word
+    # Ambil semua gambar/rumus grafik yang ada di file Word
     all_images = get_images_from_docx(doc)
     
     # Ambil semua teks baris per baris
@@ -35,13 +39,13 @@ def convert_docx_to_moodle_xml(docx_file):
     questions_xml = ""
     
     q_num = 1
-    img_counter = 0 # Penanda urutan gambar yang ditemukan
+    img_counter = 0 
     i = 0
     
     while i < len(lines):
         line = lines[i]
 
-        # 1. DETEKSI SOAL ESSAY (SOAL TERAKHIR / NOMOR 26)
+        # A. DETEKSI SOAL ESSAY
         if "Berdasarkan kisah Sultan" in line or "Tuliskan terjemahan" in line:
             essay_content = "<br/>".join(lines[i:])
             essay_content = wrap_arabic(essay_content)
@@ -57,26 +61,24 @@ def convert_docx_to_moodle_xml(docx_file):
   </question>\n"""
             break 
 
-        # 2. DETEKSI PILIHAN GANDA & MULTIPLE CHOICE SET
+        # B. DETEKSI PILIHAN GANDA & MULTIPLE CHOICE SET
         if not line.startswith("Ans:") and not re.match(r'^[A-E][\.:\)]', line):
             q_text = wrap_arabic(line)
             q_type = "multichoiceset" if 23 <= q_num <= 25 else "multichoice"
             
-            # Cek jika soal ini kemungkinan memiliki gambar (asumsi gambar muncul berurutan)
-            # Di Moodle, gambar dimasukkan via tag <img> dan data Base64 dimasukkan di tag <file>
             img_tag = ""
             file_tag = ""
             
-            # Logika sederhana: Jika di dokumen Word ada gambar, kita coba pasangkan ke soal
-            # Tips: Jika soal tertentu ada gambar, tuliskan [GAMBAR] di Word agar lebih akurat
-            if "[GAMBAR]" in line.upper() and img_counter < len(all_images):
+            # Cek penanda [GAMBAR] atau [RUMUS]
+            # Kita buat fleksibel agar guru bisa menggunakan salah satu
+            if re.search(r'\[(GAMBAR|RUMUS)\]', q_text.upper()) and img_counter < len(all_images):
                 img_data = all_images[img_counter]
-                img_filename = f"gambar_{q_num}.png"
-                img_tag = f'<p><img src="@@PLUGINFILE@@/{img_filename}" alt="gambar" /></p>'
+                img_filename = f"visual_{q_num}_{img_counter}.png"
+                img_tag = f'<p><img src="@@PLUGINFILE@@/{img_filename}" alt="visual" /></p>'
                 file_tag = f'<file name="{img_filename}" path="/" encoding="base64">{img_data}</file>'
                 img_counter += 1
-                # Hapus teks penanda [GAMBAR] agar tidak muncul di soal
-                q_text = re.sub(r'\[GAMBAR\]', '', q_text, flags=re.IGNORECASE)
+                # Hapus teks penanda dari tampilan soal di Moodle
+                q_text = re.sub(r'\[(GAMBAR|RUMUS)\]', '', q_text, flags=re.IGNORECASE).strip()
 
             current_q_xml = f'  <question type="{q_type}">\n'
             current_q_xml += f'    <name><text>Soal {q_num}</text></name>\n'
@@ -117,26 +119,26 @@ def convert_docx_to_moodle_xml(docx_file):
     return xml_header + questions_xml + xml_footer
 
 # --- Tampilan Streamlit ---
-st.set_page_config(page_title="Konverter Moodle", page_icon="🕌")
-st.title("🕌 Konverter Word ke Moodle (Support Gambar)")
+st.set_page_config(page_title="Konverter Moodle", page_icon="🕋")
+st.title("🕋 Konverter Word ke Moodle (Quran & Math)")
 st.markdown("""
-### Cara Penggunaan:
-1. Pastikan setiap soal ditulis dalam format yang benar. type soal yang berlaku: multiple choice, multiple choice set, dan essay
-2. Tulis "Ans: [Kunci]" di diakhir soal.
-3. **Penting:** Jika soal memiliki gambar, ketik teks `[GAMBAR]` di dalam kalimat soalnya agar sistem tahu di mana harus meletakkan gambar tersebut.
+### Panduan Penulisan di Word:
+1. **Soal Biasa:** Ketik soal, lalu pilihan A, B, C, D, dan akhiri dengan `Ans: A`.
+2. **Soal Matematika/Gambar:** Sisipkan persamaan atau gambar di Word, lalu tambahkan teks `[RUMUS]` atau `[GAMBAR]` di dalam kalimat soal tersebut.
+3. **Arab:** Teks Arab otomatis akan diperbesar agar mudah dibaca siswa.
 """)
 
-file = st.file_uploader("Upload File .docx", type=["docx"])
+file = st.file_uploader("Unggah File .docx", type=["docx"])
 
 if file:
-    with st.spinner('Sedang mengonversi...'):
+    with st.spinner('Memproses dokumen dan gambar...'):
         try:
             hasil_xml = convert_docx_to_moodle_xml(file)
-            st.success("Konversi Selesai!")
+            st.success("Konversi Berhasil!")
             st.download_button(
                 label="📥 Download XML Moodle", 
                 data=hasil_xml, 
-                file_name="soal_moodle_bergambar.xml", 
+                file_name="moodle_quiz_lengkap.xml", 
                 mime="text/xml"
             )
         except Exception as e:
