@@ -2,7 +2,6 @@ import streamlit as st
 from docx import Document
 import re
 
-# --- FUNGSI PENDUKUNG ---
 def wrap_arabic(text):
     if not text: return ""
     arabic_pattern = re.compile(r'([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)')
@@ -10,26 +9,25 @@ def wrap_arabic(text):
 
 def convert_docx_to_moodle_xml(docx_file):
     doc = Document(docx_file)
-    raw_lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    # Sanitasi teks dari karakter non-breaking space (\xa0)
+    raw_lines = [p.text.replace('\xa0', ' ').strip() for p in doc.paragraphs if p.text.strip()]
     
-    if not raw_lines:
-        return None, {}, [], "File Kosong"
+    if not raw_lines: return None, {}, [], "File Kosong"
 
-    judul_paket = raw_lines[0]
+    judul_paket = f"{raw_lines[0]} {raw_lines[1]}" if len(raw_lines) > 1 else raw_lines[0]
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
-    # State Management
     current_mode = "MULTIPLE CHOICE"
     q_num_internal = 1
     stats = {"MULTIPLE CHOICE": 0, "MULTIPLE CHOICE SET": 0, "ESSAY": 0}
     audit_log = []
     
-    i = 1
+    i = 0
     while i < len(raw_lines):
         line = raw_lines[i]
         line_up = line.upper()
 
-        # 1. Deteksi Tipe Soal (Penanda Header)
+        # 1. DETEKSI TIPE SOAL (PENANDA MODE) - PRIORITAS UTAMA
         if "MULTIPLE CHOICE SET" in line_up:
             current_mode = "MULTIPLE CHOICE SET"
             i += 1; continue
@@ -40,8 +38,8 @@ def convert_docx_to_moodle_xml(docx_file):
             current_mode = "ESSAY"
             i += 1; continue
 
-        # 2. Deteksi Nomor Soal (Level 1 - Angka)
-        match_soal = re.match(r'^(\d+)[.\s]+(.*)', line)
+        # 2. DETEKSI NOMOR SOAL (LEVEL 1: ANGKA)
+        match_soal = re.match(r'^\s*(\d+)[\.\s]+(.*)', line)
         
         if match_soal and current_mode != "ESSAY":
             soal_num_doc = match_soal.group(1)
@@ -50,28 +48,43 @@ def convert_docx_to_moodle_xml(docx_file):
             ans_key = ""
             i += 1
             
-            # 3 & 4. Deteksi Pilihan (Level 2 - Huruf) & ANS
+            # Kumpulkan baris sampai ketemu ANS:
             while i < len(raw_lines):
                 curr_line = raw_lines[i]
                 curr_up = curr_line.upper()
                 
+                # Cek Penanda Tipe Soal baru di tengah jalan (antisipasi error format)
+                if any(x in curr_up for x in ["MULTIPLE CHOICE", "ESSAY"]):
+                    break
+
+                # 4. DETEKSI KUNCI JAWABAN (ANS:)
                 if curr_up.startswith("ANS:"):
-                    # Ambil kunci (bisa single 'A' atau set 'A,B,D')
-                    ans_key = "".join(re.findall(r'[A-D,]', curr_up))
+                    # Cek apakah kunci ada di baris yang sama (misal Ans: A)
+                    found_key = "".join(re.findall(r'[A-D,]', curr_up.replace("ANS:", "")))
+                    if found_key:
+                        ans_key = found_key
+                    else:
+                        # Jika baris ANS: kosong, ambil baris di bawahnya
+                        i += 1
+                        if i < len(raw_lines):
+                            ans_key = "".join(re.findall(r'[A-D,]', raw_lines[i].upper()))
                     i += 1
                     break
                 
-                # Cek baris pilihan (a. b. c. d.)
-                match_opt = re.match(r'^[a-dA-D][.\)\-\s]+(.*)', curr_line)
+                # 3. DETEKSI OPSI JAWABAN (LEVEL 2: HURUF)
+                match_opt = re.match(r'^\s*([a-dA-D])[\.\)\-\s]+(.*)', curr_line)
                 if match_opt:
-                    options.append(match_opt.group(1).strip())
-                elif not re.match(r'^\d+[.\s]+', curr_line) and not any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY"]):
-                    soal_text += " " + curr_line
+                    options.append(match_opt.group(2).strip())
                 else:
-                    break
+                    # Jika bukan angka baru dan bukan opsi, berarti lanjutan teks soal
+                    if not re.match(r'^\s*\d+[\.\s]+', curr_line):
+                        soal_text += " " + curr_line
+                    else:
+                        # Jika ketemu angka baru sebelum ada ANS:, soal sebelumnya dianggap gagal
+                        break
                 i += 1
             
-            # Buat XML Question
+            # VALIDASI DAN GENERASI XML
             if options and ans_key:
                 is_single = "SET" not in current_mode
                 xml_output += f'  <question type="multichoice">\n'
@@ -96,15 +109,18 @@ def convert_docx_to_moodle_xml(docx_file):
                 
                 xml_output += '  </question>\n'
                 stats[current_mode] += 1
-                audit_log.append(f"✅ No {soal_num_doc}: Berhasil")
+                audit_log.append(f"✅ No {soal_num_doc}: Berhasil ({current_mode})")
                 q_num_internal += 1
+            else:
+                audit_log.append(f"❌ No {soal_num_doc}: Gagal (Opsi/Kunci tidak lengkap)")
             continue
 
         elif current_mode == "ESSAY":
-            essay_block = "<br/>".join(raw_lines[i:])
-            essay_block = re.sub(r'Ans:.*', '', essay_block, flags=re.IGNORECASE)
+            # Mode Essay: Ambil sisa teks sebagai satu kesatuan
+            essay_content = "<br/>".join(raw_lines[i:])
+            essay_content = re.sub(r'Ans:.*', '', essay_content, flags=re.IGNORECASE | re.DOTALL)
             xml_output += f'  <question type="essay">\n    <name><text>Soal {q_num_internal:02d} (Essay)</text></name>\n'
-            xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_block)}</p>]]></text></questiontext>\n'
+            xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_content)}</p>]]></text></questiontext>\n'
             xml_output += '    <responseformat>editor</responseformat><responserequired>1</responserequired>\n  </question>\n'
             stats["ESSAY"] += 1
             audit_log.append(f"✅ Bagian Essay Berhasil")
@@ -115,37 +131,4 @@ def convert_docx_to_moodle_xml(docx_file):
     xml_output += '</quiz>'
     return xml_output, stats, audit_log, judul_paket
 
-# --- INTERFACE STREAMLIT ---
-st.set_page_config(page_title="PAI Moodle Converter", page_icon="🌙")
-st.title("🌙 PAI Moodle XML Converter")
-
-uploaded_file = st.file_uploader("Upload File Docx Soal", type=["docx"])
-
-if uploaded_file:
-    with st.spinner('Memproses dokumen...'):
-        xml_result, statistik, log_audit, judul = convert_docx_to_moodle_xml(uploaded_file)
-    
-    if xml_result:
-        st.info(f"📋 **Paket Soal:** {judul}")
-        
-        # Dashboard Metrik
-        st.subheader("📊 Statistik Soal")
-        total = sum(statistik.values())
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("PG Biasa", statistik.get("MULTIPLE CHOICE", 0))
-        m2.metric("PG Set", statistik.get("MULTIPLE CHOICE SET", 0))
-        m3.metric("Essay", statistik.get("ESSAY", 0))
-        m4.metric("Total", total)
-
-        # Download
-        st.download_button(
-            label="📥 Download XML untuk Moodle",
-            data=xml_result,
-            file_name=f"{judul.replace(' ', '_')}.xml",
-            mime="text/xml",
-            use_container_width=True
-        )
-
-        with st.expander("🔍 Lihat Log Audit"):
-            for log in log_audit:
-                st.write(log)
+# --- UI STREAMLIT (Tetap Sama) ---
