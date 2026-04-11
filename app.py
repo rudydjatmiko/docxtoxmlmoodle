@@ -9,7 +9,7 @@ col_title, col_icons = st.columns([3, 1])
 
 with col_title:
     st.title("🌙 Moodle XML Parser")
-    st.write("Ubah dokumen **MS Word** Anda menjadi format **Moodle XML** dalam sekejap.")
+    st.write("Convert **MS Word** file format to **Moodle XML**")
 
 with col_icons:
     # Menampilkan ikon MS Word dan Moodle menggunakan Emoji besar atau URL Gambar
