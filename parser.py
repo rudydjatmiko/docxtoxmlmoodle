@@ -5,7 +5,7 @@ from utils import wrap_arabic, clean_line
 def parse_docx_to_moodle(docx_file):
     """
     FILE: parser.py
-    LOGIKA: Validasi ANS ketat, Pendeteksian Mode SET Akurat, & 1 Blok Essay.
+    LOGIKA: Penomoran soal kontinu (lanjut terus) untuk semua tipe soal.
     """
     try:
         doc = Document(docx_file)
@@ -21,7 +21,8 @@ def parse_docx_to_moodle(docx_file):
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
     current_mode = "MULTIPLE CHOICE"
-    q_num_internal = 1
+    # Satu variabel penghitung untuk SEMUA tipe soal
+    global_q_num = 1 
     stats = {"MULTIPLE CHOICE": 0, "MULTIPLE CHOICE SET": 0, "ESSAY": 0}
     audit_log = []
     
@@ -53,7 +54,6 @@ def parse_docx_to_moodle(docx_file):
                 while i < len(raw_lines):
                     curr = raw_lines[i]
                     curr_up = curr.upper()
-                    
                     if any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY", "URAIAN"]):
                         break
                     
@@ -68,24 +68,22 @@ def parse_docx_to_moodle(docx_file):
                         soal_text += "<br/>" + curr
                     i += 1
                 
-                # Eksekusi penulisan XML (Hanya satu kali per soal)
                 if found_ans and options and ans_key:
                     is_single = (current_mode == "MULTIPLE CHOICE")
                     correct_labels = [x.strip() for x in ans_key.split(",")]
                     
                     xml_output += f'  <question type="multichoice">\n'
-                    xml_output += f'    <name><text>Soal {q_num_internal:02d} ({current_mode})</text></name>\n'
+                    # Menggunakan global_q_num agar nomor lanjut terus
+                    xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                     xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(soal_text)}</p>]]></text></questiontext>\n'
                     xml_output += f'    <single>{"true" if is_single else "false"}</single>\n'
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
-                    xml_output += f'    <answernumbering>abc</answernumbering>\n'
                     
                     for idx, opt in enumerate(options):
                         lbl = chr(65 + idx)
                         if is_single:
                             frac = "100" if lbl in correct_labels else "0"
                         else:
-                            # Bobot rata untuk jawaban benar di mode SET
                             frac = str(round(100/len(correct_labels), 5)) if lbl in correct_labels else "0"
                         
                         xml_output += f'    <answer fraction="{frac}" format="html">\n'
@@ -94,13 +92,11 @@ def parse_docx_to_moodle(docx_file):
                     
                     xml_output += '  </question>\n'
                     stats[current_mode] += 1
-                    q_num_internal += 1
-                else:
-                    audit_log.append(f"⚠️ Soal {q_num_internal} diabaikan: Tidak ada ANS atau opsi.")
+                    global_q_num += 1 # Naikkan nomor urut
                 continue
             else: i += 1
 
-        # --- 3. PROSES DATA: ESSAY (1 BLOK WAJIB ANS) ---
+        # --- 3. PROSES DATA: ESSAY (1 BLOK) ---
         else:
             essay_text = ""
             found_ans_essay = False
@@ -120,15 +116,15 @@ def parse_docx_to_moodle(docx_file):
             
             if found_ans_essay and essay_text.strip():
                 xml_output += f'  <question type="essay">\n'
-                xml_output += f'    <name><text>Soal Essay Campuran</text></name>\n'
+                # Menggunakan global_q_num yang sama agar nomor urutnya lanjut dari PG
+                xml_output += f'    <name><text>Soal {global_q_num:02d} (Essay)</text></name>\n'
                 xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_text)}</p>]]></text></questiontext>\n'
                 xml_output += '    <defaultgrade>1.0000000</defaultgrade>\n'
                 xml_output += '    <responseformat>editor</responseformat>\n'
                 xml_output += '  </question>\n'
                 stats["ESSAY"] = 1
-                audit_log.append("✅ Berhasil: 1 Blok Essay Terdeteksi")
-            else:
-                audit_log.append("⚠️ Essay diabaikan: Label 'ANS' tidak ditemukan.")
+                audit_log.append(f"✅ Berhasil: Soal {global_q_num} (Essay)")
+                global_q_num += 1 # Naikkan nomor urut
             continue
 
     xml_output += '</quiz>'
