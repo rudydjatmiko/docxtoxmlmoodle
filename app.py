@@ -22,7 +22,7 @@ st.markdown("---")
 # --- 2. KOMPONEN UGGAH FILE ---
 # Menambahkan ikon pada area uploader
 st.info("💡 **Petunjuk:** Pastikan file .docx Anda mengikuti format yang ditentukan.")
-uploaded_file = st.file_uploader("📂 Unggah File MS Word (.docx)", type="docx")
+uploaded_file = st.file_uploader("📂 Upload your MS Word File (.docx)", type="docx")
 
 if uploaded_file:
     # Komunikasi dengan parser.py
