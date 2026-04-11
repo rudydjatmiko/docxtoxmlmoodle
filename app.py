@@ -3,131 +3,171 @@ from docx import Document
 import re
 import io
 
-# --- FUNGSI PENDUKUNG ---
+# --- 1. FUNGSI BACKEND ---
+
 def wrap_arabic(text):
     if not text: return ""
-    # Deteksi teks Arab untuk styling RTL
     arabic_pattern = re.compile(r'([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)')
     return arabic_pattern.sub(r'<span dir="rtl" style="font-family: \'Traditional Arabic\', serif; font-size: 24px; line-height: 1.6;">\1</span>', text)
 
-def convert_to_moodle_xml(docx_file):
+def convert_docx_to_moodle_xml(docx_file):
     doc = Document(docx_file)
-    # Ambil semua baris teks yang tidak kosong
     raw_lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
     
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
-    i = 0
+    # State tracking
+    current_mode = "MULTIPLE CHOICE" # Default awal
     q_num = 1
+    i = 0
+    
+    # Statistik untuk ditampilkan di UI
+    stats = {"PG (Single)": 0, "PG Kompleks (Set)": 0, "Essay": 0}
     
     while i < len(raw_lines):
         line = raw_lines[i]
+        line_upper = line.upper()
 
-        # 1. Abaikan Header/Judul
-        if any(x in line.upper() for x in ["SAT PAI", "AKIDAH", "MULTIPLE CHOICE"]):
-            if "SET" not in line.upper(): # Jangan abaikan penanda MULTIPLE CHOICE SET
-                i += 1
-                continue
-
-        # 2. PROSES ESSAY
-        if line.upper() == "ESSAY" or "KERJAKAN SOAL BERIKUT" in line.upper():
+        # A. DETEKSI PENANDA TIPE SOAL (Header penentu mode)
+        if "MULTIPLE CHOICE SET" in line_upper:
+            current_mode = "MULTIPLE CHOICE SET"
             i += 1
-            essay_text = "<br/>".join(raw_lines[i:])
+            continue
+        elif "MULTIPLE CHOICE" in line_upper:
+            current_mode = "MULTIPLE CHOICE"
+            i += 1
+            continue
+        elif "ESSAY" in line_upper:
+            current_mode = "ESSAY"
+            i += 1
+            continue
+        
+        # Abaikan header umum dokumen agar tidak masuk ke teks soal
+        if any(h in line_upper for h in ["SAT PAI", "AKIDAH", "TAHUN PELAJARAN"]):
+            i += 1
+            continue
+
+        # B. EKSEKUSI BERDASARKAN MODE
+        if current_mode == "ESSAY":
+            # Mode Essay: Ambil semua teks yang tersisa sebagai satu kesatuan soal essay
+            # atau bisa dimodifikasi per butir jika essay Anda memiliki format "Ans:"
+            essay_content = "<br/>".join(raw_lines[i:])
             xml_output += f"""
   <question type="essay">
     <name><text>Soal {q_num:02d} (Essay)</text></name>
-    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_text)}</p>]]></text></questiontext>
+    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_content)}</p>]]></text></questiontext>
     <defaultgrade>1.0</defaultgrade>
     <responseformat>editor</responseformat>
     <responserequired>1</responserequired>
     <responsefieldlines>15</responsefieldlines>
   </question>\n"""
-            break
+            stats["Essay"] += 1
+            break 
 
-        # 3. PROSES PILIHAN GANDA (LOGIKA BACKWARD TRACKING)
-        if not line.upper().startswith("ANS:"):
-            # Kumpulkan baris sampai ketemu "Ans:"
-            temp_block = []
-            while i < len(raw_lines) and not raw_lines[i].upper().startswith("ANS:"):
-                # Abaikan penanda tipe soal di tengah-tengah
-                if raw_lines[i].upper() not in ["MULTIPLE CHOICE", "MULTIPLE CHOICE SET"]:
-                    temp_block.append(raw_lines[i])
+        else:
+            # Mode MULTIPLE CHOICE atau MULTIPLE CHOICE SET
+            block = []
+            while i < len(raw_lines):
+                curr = raw_lines[i]
+                curr_up = curr.upper()
+                # Berhenti jika ketemu kunci jawaban ATAU ada penanda tipe soal baru
+                if curr_up.startswith("ANS:") or any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY"]):
+                    break
+                block.append(curr)
                 i += 1
             
-            # Jika berhenti karena ketemu "Ans:"
+            # Jika blok berhenti karena menemukan kunci "Ans:"
             if i < len(raw_lines) and raw_lines[i].upper().startswith("ANS:"):
                 ans_key = raw_lines[i].upper().replace("ANS:", "").strip()
                 i += 1
                 
-                # Sesuai file Anda: 4 baris terakhir di blok adalah pilihan A, B, C, D
-                if len(temp_block) >= 5:
-                    choices = temp_block[-4:] # 4 baris terakhir
-                    question_parts = temp_block[:-4] # sisanya adalah soal
-                    question_text = "<br/>".join([wrap_arabic(p) for p in question_parts])
+                # Sesuai pola dokumen Anda: 4 baris terbawah dalam blok adalah pilihan A, B, C, D
+                if len(block) >= 5:
+                    choices = block[-4:] 
+                    question_body = block[:-4] 
                     
-                    # Deteksi tipe (Single atau Multi)
-                    is_mcs = "," in ans_key
-                    q_type = "multichoice" # Moodle menggunakan type multichoice untuk keduanya
+                    q_html = "".join([f"<p>{wrap_arabic(p)}</p>" for p in question_body])
                     
-                    xml_output += f'  <question type="{q_type}">\n'
+                    # Tentukan status 'single' berdasarkan mode saat ini
+                    is_single = "SET" not in current_mode
+                    
+                    xml_output += f'  <question type="multichoice">\n'
                     xml_output += f'    <name><text>Soal {q_num:02d}</text></name>\n'
-                    xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{question_text}</p>]]></text></questiontext>\n'
-                    xml_output += f'    <single>{"false" if is_mcs else "true"}</single>\n'
+                    xml_output += f'    <questiontext format="html"><text><![CDATA[{q_html}]]></text></questiontext>\n'
+                    xml_output += f'    <single>{"true" if is_single else "false"}</single>\n'
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
                     xml_output += f'    <answernumbering>abc</answernumbering>\n'
 
-                    # Mapping label ke index (A=0, B=1, C=2, D=3)
                     labels = ["A", "B", "C", "D"]
                     for idx, c_text in enumerate(choices):
-                        current_label = labels[idx]
+                        label = labels[idx]
                         
-                        # Hitung Skor
-                        if is_mcs:
+                        if not is_single: # Jika mode MULTIPLE CHOICE SET
                             correct_list = [x.strip() for x in ans_key.split(',')]
-                            # Bobot dibagi rata (misal 3 jawaban benar = 33.33%)
-                            fraction = str(100 / len(correct_list)) if current_label in correct_list else "0"
-                        else:
-                            fraction = "100" if current_label == ans_key else "0"
+                            # Skor dibagi rata (100% / jumlah jawaban benar)
+                            fraction = str(round(100/len(correct_list), 5)) if label in correct_list else "0"
+                        else: # Jika mode MULTIPLE CHOICE biasa
+                            fraction = "100" if label == ans_key else "0"
                         
                         xml_output += f'    <answer fraction="{fraction}" format="html">\n'
                         xml_output += f'      <text><![CDATA[{wrap_arabic(c_text)}]]></text>\n'
                         xml_output += f'    </answer>\n'
                     
                     xml_output += '  </question>\n'
+                    
+                    # Update statistik
+                    if is_single: stats["PG (Single)"] += 1
+                    else: stats["PG Kompleks (Set)"] += 1
                     q_num += 1
             else:
                 i += 1
-        else:
-            i += 1
 
     xml_output += '</quiz>'
-    return xml_output
+    return xml_output, stats
 
-# --- ANTARMUKA STREAMLIT ---
-st.set_page_config(page_title="Moodle XML Final Fix", page_icon="✅")
-st.title("✅ Moodle XML Converter (Final Version)")
-st.write("Skrip ini sudah diperbaiki untuk memisahkan Soal dan Pilihan secara otomatis.")
+# --- 2. ANTARMUKA (UI) STREAMLIT ---
 
-uploaded_file = st.file_uploader("Upload file SAT9 AkidAH 9.docx", type=["docx"])
+st.set_page_config(page_title="Konverter Moodle Akidah", page_icon="🕌")
+
+st.title("🕌 Konverter Moodle XML (Auto-Detection)")
+st.markdown("""
+Skrip ini akan mendeteksi tipe soal berdasarkan **Header** di dalam file Word Anda:
+1. Menemukan **MULTIPLE CHOICE** → Soal PG biasa (1 jawaban).
+2. Menemukan **MULTIPLE CHOICE SET** → Soal PG Kompleks (bisa banyak jawaban).
+3. Menemukan **ESSAY** → Soal uraian.
+""")
+
+uploaded_file = st.file_uploader("Upload file .docx Anda", type=["docx"])
 
 if uploaded_file:
     try:
-        xml_result = convert_to_moodle_xml(uploaded_file)
+        hasil_xml, statistik = convert_docx_to_moodle_xml(uploaded_file)
         
-        # Berikan preview kecil
-        st.success("Konversi Berhasil!")
+        # --- MENAMPILKAN JUMLAH & TIPE SOAL ---
+        st.subheader("📊 Hasil Konversi")
+        col1, col2, col3 = st.columns(3)
         
+        with col1:
+            st.metric("PG Biasa", statistik["PG (Single)"])
+        with col2:
+            st.metric("PG Kompleks (Set)", statistik["PG Kompleks (Set)"])
+        with col3:
+            st.metric("Essay", statistik["Essay"])
+            
+        total_soal = sum(statistik.values())
+        st.write(f"**Total soal yang terbaca: {total_soal} soal.**")
+
         # Tombol Download
-        file_name = uploaded_file.name.replace(".docx", ".xml")
+        file_xml = uploaded_file.name.replace(".docx", ".xml")
         st.download_button(
             label="📥 Download File XML untuk Moodle",
-            data=xml_result,
-            file_name=file_name,
-            mime="text/xml"
+            data=hasil_xml,
+            file_name=file_xml,
+            mime="text/xml",
+            use_container_width=True
         )
         
-        with st.expander("Lihat Preview XML"):
-            st.code(xml_result[:1000] + "...", language='xml')
-            
+        st.success("File siap diimport ke Moodle via Question Bank!")
+
     except Exception as e:
-        st.error(f"Terjadi kesalahan: {e}")
+        st.error(f"Terjadi kesalahan saat membaca file: {e}")
