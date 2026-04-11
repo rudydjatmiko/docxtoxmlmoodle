@@ -2,7 +2,7 @@ import streamlit as st
 from parser import parse_docx_to_moodle
 
 # --- 1. SETTING UI & HEADER ---
-st.set_page_config(page_title="Converter Word ke Moodle", page_icon="📝", layout="wide")
+st.set_page_config(page_title="Docx to XML Moodle", page_icon="📝", layout="wide")
 
 # Menggunakan kolom untuk menampilkan ikon secara berdampingan
 col_title, col_icons = st.columns([3, 1])
