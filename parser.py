@@ -5,7 +5,7 @@ from utils import wrap_arabic, clean_line
 def parse_docx_to_moodle(docx_file):
     """
     FILE: parser.py
-    FIX: Menggunakan header 'MULTIPLE ANSWER' untuk soal jawaban jamak.
+    FIX: Urutan deteksi mode diperketat agar MULTIPLE ANSWER tidak tertukar.
     """
     try:
         doc = Document(docx_file)
@@ -20,7 +20,6 @@ def parse_docx_to_moodle(docx_file):
     judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
-    # Default mode awal
     current_mode = "MULTIPLE CHOICE"
     global_q_num = 1 
     stats = {"MULTIPLE CHOICE": 0, "MULTIPLE ANSWER": 0, "ESSAY": 0}
@@ -31,8 +30,8 @@ def parse_docx_to_moodle(docx_file):
         line = raw_lines[i]
         line_up = line.upper().strip()
 
-        # --- 1. DETEKSI TRANSISI MODE ---
-        # "MULTIPLE ANSWER" menggantikan "MULTIPLE CHOICE SET"
+        # --- 1. DETEKSI TRANSISI MODE (URUTAN SANGAT PENTING) ---
+        # Cek MULTIPLE ANSWER dulu sebelum MULTIPLE CHOICE
         if "MULTIPLE ANSWER" in line_up:
             current_mode = "MULTIPLE ANSWER"
             i += 1; continue
@@ -43,7 +42,7 @@ def parse_docx_to_moodle(docx_file):
             current_mode = "ESSAY"
             i += 1; continue
 
-        # --- 2. PROSES DATA: PILIHAN GANDA (SINGLE & MULTIPLE) ---
+        # --- 2. PROSES DATA: PILIHAN GANDA ---
         if current_mode != "ESSAY":
             if not line_up.startswith("ANS") and len(line) > 5:
                 soal_text = line
@@ -56,7 +55,8 @@ def parse_docx_to_moodle(docx_file):
                     curr = raw_lines[i]
                     curr_up = curr.upper().strip()
                     
-                    if any(m in curr_up for m in ["MULTIPLE CHOICE", "MULTIPLE ANSWER", "ESSAY", "URAIAN"]):
+                    # Stop jika bertemu header mode apa pun
+                    if "MULTIPLE ANSWER" in curr_up or "MULTIPLE CHOICE" in curr_up or "ESSAY" in curr_up:
                         break
                     
                     if curr_up.startswith("ANS"):
@@ -71,24 +71,22 @@ def parse_docx_to_moodle(docx_file):
                     i += 1
                 
                 if found_ans and options and ans_key:
-                    is_multiple_mode = (current_mode == "MULTIPLE ANSWER")
+                    is_multiple = (current_mode == "MULTIPLE ANSWER")
                     correct_labels = [x.strip() for x in ans_key.split(",")]
                     
                     xml_output += f'  <question type="multichoice">\n'
                     xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                     xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(soal_text)}</p>]]></text></questiontext>\n'
                     
-                    # Jika MULTIPLE ANSWER, single=false
-                    xml_output += f'    <single>{"false" if is_multiple_mode else "true"}</single>\n'
+                    # Tag krusial untuk Moodle
+                    xml_output += f'    <single>{"false" if is_multiple else "true"}</single>\n'
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
-                    xml_output += f'    <answernumbering>abc</answernumbering>\n'
                     
                     for idx, opt in enumerate(options):
                         lbl = chr(65 + idx)
-                        if not is_multiple_mode:
+                        if not is_multiple:
                             frac = "100" if lbl in correct_labels else "0"
                         else:
-                            # Pembagian bobot otomatis untuk MULTIPLE ANSWER
                             frac = str(round(100/len(correct_labels), 5)) if lbl in correct_labels else "0"
                         
                         xml_output += f'    <answer fraction="{frac}" format="html">\n'
@@ -96,26 +94,22 @@ def parse_docx_to_moodle(docx_file):
                         xml_output += f'    </answer>\n'
                     
                     xml_output += '  </question>\n'
-                    stats[current_mode] += 1
+                    stats[current_mode] = stats.get(current_mode, 0) + 1
                     global_q_num += 1
                 continue
             else: i += 1
 
-        # --- 3. PROSES DATA: ESSAY (1 BLOK) ---
+        # --- 3. PROSES DATA: ESSAY ---
         else:
             essay_text = ""
             found_ans_essay = False
-            
             while i < len(raw_lines):
                 curr_line = raw_lines[i]
                 curr_up = curr_line.upper().strip()
-                
                 if curr_up.startswith("ANS"):
                     found_ans_essay = True
                     i += 1; break
-                
-                if any(m in curr_up for m in ["MULTIPLE CHOICE", "MULTIPLE ANSWER"]): break
-                
+                if "MULTIPLE" in curr_up: break
                 essay_text += curr_line + "<br/>"
                 i += 1
             
@@ -123,10 +117,9 @@ def parse_docx_to_moodle(docx_file):
                 xml_output += f'  <question type="essay">\n'
                 xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                 xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_text)}</p>]]></text></questiontext>\n'
-                xml_output += '    <defaultgrade>1.0000000</defaultgrade>\n'
                 xml_output += '    <responseformat>editor</responseformat>\n'
                 xml_output += '  </question>\n'
-                stats["ESSAY"] = 1
+                stats["ESSAY"] = stats.get("ESSAY", 0) + 1
                 global_q_num += 1
             continue
 
