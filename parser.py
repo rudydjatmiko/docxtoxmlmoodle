@@ -5,7 +5,7 @@ from utils import wrap_arabic, clean_line
 def parse_docx_to_moodle(docx_file):
     """
     FILE: parser.py
-    LOGIKA: Penomoran soal kontinu (lanjut terus) untuk semua tipe soal.
+    FIX: Menggunakan header 'MULTIPLE ANSWER' untuk soal jawaban jamak.
     """
     try:
         doc = Document(docx_file)
@@ -20,20 +20,21 @@ def parse_docx_to_moodle(docx_file):
     judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
+    # Default mode awal
     current_mode = "MULTIPLE CHOICE"
-    # Satu variabel penghitung untuk SEMUA tipe soal
     global_q_num = 1 
-    stats = {"MULTIPLE CHOICE": 0, "MULTIPLE CHOICE SET": 0, "ESSAY": 0}
+    stats = {"MULTIPLE CHOICE": 0, "MULTIPLE ANSWER": 0, "ESSAY": 0}
     audit_log = []
     
     i = 0
     while i < len(raw_lines):
         line = raw_lines[i]
-        line_up = line.upper()
+        line_up = line.upper().strip()
 
         # --- 1. DETEKSI TRANSISI MODE ---
-        if "MULTIPLE CHOICE SET" in line_up:
-            current_mode = "MULTIPLE CHOICE SET"
+        # "MULTIPLE ANSWER" menggantikan "MULTIPLE CHOICE SET"
+        if "MULTIPLE ANSWER" in line_up:
+            current_mode = "MULTIPLE ANSWER"
             i += 1; continue
         elif "MULTIPLE CHOICE" in line_up:
             current_mode = "MULTIPLE CHOICE"
@@ -42,7 +43,7 @@ def parse_docx_to_moodle(docx_file):
             current_mode = "ESSAY"
             i += 1; continue
 
-        # --- 2. PROSES DATA: PILIHAN GANDA (SINGLE & SET) ---
+        # --- 2. PROSES DATA: PILIHAN GANDA (SINGLE & MULTIPLE) ---
         if current_mode != "ESSAY":
             if not line_up.startswith("ANS") and len(line) > 5:
                 soal_text = line
@@ -53,8 +54,9 @@ def parse_docx_to_moodle(docx_file):
                 
                 while i < len(raw_lines):
                     curr = raw_lines[i]
-                    curr_up = curr.upper()
-                    if any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY", "URAIAN"]):
+                    curr_up = curr.upper().strip()
+                    
+                    if any(m in curr_up for m in ["MULTIPLE CHOICE", "MULTIPLE ANSWER", "ESSAY", "URAIAN"]):
                         break
                     
                     if curr_up.startswith("ANS"):
@@ -69,21 +71,24 @@ def parse_docx_to_moodle(docx_file):
                     i += 1
                 
                 if found_ans and options and ans_key:
-                    is_single = (current_mode == "MULTIPLE CHOICE")
+                    is_multiple_mode = (current_mode == "MULTIPLE ANSWER")
                     correct_labels = [x.strip() for x in ans_key.split(",")]
                     
                     xml_output += f'  <question type="multichoice">\n'
-                    # Menggunakan global_q_num agar nomor lanjut terus
                     xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                     xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(soal_text)}</p>]]></text></questiontext>\n'
-                    xml_output += f'    <single>{"true" if is_single else "false"}</single>\n'
+                    
+                    # Jika MULTIPLE ANSWER, single=false
+                    xml_output += f'    <single>{"false" if is_multiple_mode else "true"}</single>\n'
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
+                    xml_output += f'    <answernumbering>abc</answernumbering>\n'
                     
                     for idx, opt in enumerate(options):
                         lbl = chr(65 + idx)
-                        if is_single:
+                        if not is_multiple_mode:
                             frac = "100" if lbl in correct_labels else "0"
                         else:
+                            # Pembagian bobot otomatis untuk MULTIPLE ANSWER
                             frac = str(round(100/len(correct_labels), 5)) if lbl in correct_labels else "0"
                         
                         xml_output += f'    <answer fraction="{frac}" format="html">\n'
@@ -92,7 +97,7 @@ def parse_docx_to_moodle(docx_file):
                     
                     xml_output += '  </question>\n'
                     stats[current_mode] += 1
-                    global_q_num += 1 # Naikkan nomor urut
+                    global_q_num += 1
                 continue
             else: i += 1
 
@@ -103,28 +108,26 @@ def parse_docx_to_moodle(docx_file):
             
             while i < len(raw_lines):
                 curr_line = raw_lines[i]
-                curr_up = curr_line.upper()
+                curr_up = curr_line.upper().strip()
                 
                 if curr_up.startswith("ANS"):
                     found_ans_essay = True
                     i += 1; break
                 
-                if "MULTIPLE CHOICE" in curr_up: break
+                if any(m in curr_up for m in ["MULTIPLE CHOICE", "MULTIPLE ANSWER"]): break
                 
                 essay_text += curr_line + "<br/>"
                 i += 1
             
             if found_ans_essay and essay_text.strip():
                 xml_output += f'  <question type="essay">\n'
-                # Menggunakan global_q_num yang sama agar nomor urutnya lanjut dari PG
-                xml_output += f'    <name><text>Soal {global_q_num:02d} (Essay)</text></name>\n'
+                xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                 xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_text)}</p>]]></text></questiontext>\n'
                 xml_output += '    <defaultgrade>1.0000000</defaultgrade>\n'
                 xml_output += '    <responseformat>editor</responseformat>\n'
                 xml_output += '  </question>\n'
                 stats["ESSAY"] = 1
-                audit_log.append(f"✅ Berhasil: Soal {global_q_num} (Essay)")
-                global_q_num += 1 # Naikkan nomor urut
+                global_q_num += 1
             continue
 
     xml_output += '</quiz>'
