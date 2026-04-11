@@ -3,8 +3,6 @@ from docx import Document
 import re
 import io
 
-# --- 1. FUNGSI BACKEND ---
-
 def wrap_arabic(text):
     if not text: return ""
     arabic_pattern = re.compile(r'([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)')
@@ -12,23 +10,23 @@ def wrap_arabic(text):
 
 def convert_docx_to_moodle_xml(docx_file):
     doc = Document(docx_file)
+    # Ambil baris non-kosong
     raw_lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
     
     xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
     
-    # State tracking
-    current_mode = "MULTIPLE CHOICE" # Default awal
+    current_mode = "MULTIPLE CHOICE" 
     q_num = 1
     i = 0
     
-    # Statistik untuk ditampilkan di UI
     stats = {"PG (Single)": 0, "PG Kompleks (Set)": 0, "Essay": 0}
-    
+    debug_list = [] # Untuk melacak soal yang terbaca
+
     while i < len(raw_lines):
         line = raw_lines[i]
         line_upper = line.upper()
 
-        # A. DETEKSI PENANDA TIPE SOAL (Header penentu mode)
+        # 1. DETEKSI PERUBAHAN MODE
         if "MULTIPLE CHOICE SET" in line_upper:
             current_mode = "MULTIPLE CHOICE SET"
             i += 1
@@ -42,16 +40,18 @@ def convert_docx_to_moodle_xml(docx_file):
             i += 1
             continue
         
-        # Abaikan header umum dokumen agar tidak masuk ke teks soal
+        # Abaikan header dokumen
         if any(h in line_upper for h in ["SAT PAI", "AKIDAH", "TAHUN PELAJARAN"]):
             i += 1
             continue
 
-        # B. EKSEKUSI BERDASARKAN MODE
+        # 2. PROSES SOAL
         if current_mode == "ESSAY":
-            # Mode Essay: Ambil semua teks yang tersisa sebagai satu kesatuan soal essay
-            # atau bisa dimodifikasi per butir jika essay Anda memiliki format "Ans:"
+            # Mode Essay: Cari semua teks sampai akhir
             essay_content = "<br/>".join(raw_lines[i:])
+            # Bersihkan Ans: --- jika ada
+            essay_content = re.sub(r'Ans:.*', '', essay_content, flags=re.IGNORECASE)
+            
             xml_output += f"""
   <question type="essay">
     <name><text>Soal {q_num:02d} (Essay)</text></name>
@@ -62,33 +62,30 @@ def convert_docx_to_moodle_xml(docx_file):
     <responsefieldlines>15</responsefieldlines>
   </question>\n"""
             stats["Essay"] += 1
+            debug_list.append(f"Soal {q_num}: [ESSAY] {essay_content[:50]}...")
             break 
 
         else:
-            # Mode MULTIPLE CHOICE atau MULTIPLE CHOICE SET
             block = []
             while i < len(raw_lines):
                 curr = raw_lines[i]
                 curr_up = curr.upper()
-                # Berhenti jika ketemu kunci jawaban ATAU ada penanda tipe soal baru
                 if curr_up.startswith("ANS:") or any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY"]):
                     break
                 block.append(curr)
                 i += 1
             
-            # Jika blok berhenti karena menemukan kunci "Ans:"
             if i < len(raw_lines) and raw_lines[i].upper().startswith("ANS:"):
                 ans_key = raw_lines[i].upper().replace("ANS:", "").strip()
                 i += 1
                 
-                # Sesuai pola dokumen Anda: 4 baris terbawah dalam blok adalah pilihan A, B, C, D
+                # Sesuai pola: 4 baris terakhir dalam blok adalah pilihan
                 if len(block) >= 5:
                     choices = block[-4:] 
                     question_body = block[:-4] 
-                    
+                    q_text_plain = " ".join(question_body)
                     q_html = "".join([f"<p>{wrap_arabic(p)}</p>" for p in question_body])
                     
-                    # Tentukan status 'single' berdasarkan mode saat ini
                     is_single = "SET" not in current_mode
                     
                     xml_output += f'  <question type="multichoice">\n'
@@ -101,12 +98,10 @@ def convert_docx_to_moodle_xml(docx_file):
                     labels = ["A", "B", "C", "D"]
                     for idx, c_text in enumerate(choices):
                         label = labels[idx]
-                        
-                        if not is_single: # Jika mode MULTIPLE CHOICE SET
+                        if not is_single:
                             correct_list = [x.strip() for x in ans_key.split(',')]
-                            # Skor dibagi rata (100% / jumlah jawaban benar)
                             fraction = str(round(100/len(correct_list), 5)) if label in correct_list else "0"
-                        else: # Jika mode MULTIPLE CHOICE biasa
+                        else:
                             fraction = "100" if label == ans_key else "0"
                         
                         xml_output += f'    <answer fraction="{fraction}" format="html">\n'
@@ -115,59 +110,41 @@ def convert_docx_to_moodle_xml(docx_file):
                     
                     xml_output += '  </question>\n'
                     
-                    # Update statistik
                     if is_single: stats["PG (Single)"] += 1
                     else: stats["PG Kompleks (Set)"] += 1
+                    debug_list.append(f"Soal {q_num}: [{current_mode}] {q_text_plain[:50]}...")
                     q_num += 1
             else:
                 i += 1
 
     xml_output += '</quiz>'
-    return xml_output, stats
+    return xml_output, stats, debug_list
 
-# --- 2. ANTARMUKA (UI) STREAMLIT ---
+# --- UI STREAMLIT ---
+st.set_page_config(page_title="Fixer Moodle 26 Soal", page_icon="🎯")
+st.title("🎯 Moodle Converter (Audit Mode)")
 
-st.set_page_config(page_title="Konverter Moodle Akidah", page_icon="🕌")
+uploaded = st.file_uploader("Upload .docx", type=["docx"])
 
-st.title("🕌 Konverter Moodle XML (Auto-Detection)")
-st.markdown("""
-Skrip ini akan mendeteksi tipe soal berdasarkan **Header** di dalam file Word Anda:
-1. Menemukan **MULTIPLE CHOICE** → Soal PG biasa (1 jawaban).
-2. Menemukan **MULTIPLE CHOICE SET** → Soal PG Kompleks (bisa banyak jawaban).
-3. Menemukan **ESSAY** → Soal uraian.
-""")
+if uploaded:
+    xml_data, stats, debug = convert_docx_to_moodle_xml(uploaded)
+    
+    # 1. Dashboard Statistik
+    st.subheader("📊 Statistik Deteksi")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Single", stats["PG (Single)"])
+    c2.metric("Set", stats["PG Kompleks (Set)"])
+    c3.metric("Essay", stats["Essay"])
+    total = sum(stats.values())
+    c4.metric("TOTAL", total)
 
-uploaded_file = st.file_uploader("Upload file .docx Anda", type=["docx"])
+    if total < 26:
+        st.warning(f"Terdeteksi {total} soal. Jika seharusnya 26, periksa apakah ada soal yang tidak memiliki baris 'Ans:' atau pilihan jawabannya kurang dari 4 baris.")
 
-if uploaded_file:
-    try:
-        hasil_xml, statistik = convert_docx_to_moodle_xml(uploaded_file)
-        
-        # --- MENAMPILKAN JUMLAH & TIPE SOAL ---
-        st.subheader("📊 Hasil Konversi")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("PG Biasa", statistik["PG (Single)"])
-        with col2:
-            st.metric("PG Kompleks (Set)", statistik["PG Kompleks (Set)"])
-        with col3:
-            st.metric("Essay", statistik["Essay"])
-            
-        total_soal = sum(statistik.values())
-        st.write(f"**Total soal yang terbaca: {total_soal} soal.**")
+    # 2. Daftar Audit (Cek soal mana yang terbaca)
+    with st.expander("🔍 Lihat Daftar Soal yang Terbaca"):
+        for d in debug:
+            st.write(d)
 
-        # Tombol Download
-        file_xml = uploaded_file.name.replace(".docx", ".xml")
-        st.download_button(
-            label="📥 Download File XML untuk Moodle",
-            data=hasil_xml,
-            file_name=file_xml,
-            mime="text/xml",
-            use_container_width=True
-        )
-        
-        st.success("File siap diimport ke Moodle via Question Bank!")
-
-    except Exception as e:
-        st.error(f"Terjadi kesalahan saat membaca file: {e}")
+    # 3. Tombol Download
+    st.download_button("📥 Download XML", xml_data, "soal_akidah_fix.xml", "text/xml", use_container_width=True)
