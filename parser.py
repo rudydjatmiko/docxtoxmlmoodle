@@ -5,7 +5,7 @@ from utils import wrap_arabic, clean_line
 def parse_docx_to_moodle(docx_file):
     """
     FILE: parser.py
-    FIX: Urutan deteksi mode diperketat agar MULTIPLE ANSWER tidak tertukar.
+    FIX: Mendukung header tanpa spasi (MULTIPLECHOICE, MULTIPLEANSWER, ESSAY).
     """
     try:
         doc = Document(docx_file)
@@ -28,23 +28,23 @@ def parse_docx_to_moodle(docx_file):
     i = 0
     while i < len(raw_lines):
         line = raw_lines[i]
-        line_up = line.upper().strip()
+        # Membersihkan spasi untuk pengecekan header
+        line_check = line.upper().replace(" ", "").strip()
 
-        # --- 1. DETEKSI TRANSISI MODE (URUTAN SANGAT PENTING) ---
-        # Cek MULTIPLE ANSWER dulu sebelum MULTIPLE CHOICE
-        if "MULTIPLE ANSWER" in line_up:
+        # --- 1. DETEKSI TRANSISI MODE (SENSITIF TANPA SPASI) ---
+        if "MULTIPLEANSWER" in line_check:
             current_mode = "MULTIPLE ANSWER"
             i += 1; continue
-        elif "MULTIPLE CHOICE" in line_up:
+        elif "MULTIPLECHOICE" in line_check:
             current_mode = "MULTIPLE CHOICE"
             i += 1; continue
-        elif "ESSAY" in line_up or "URAIAN" in line_up:
+        elif "ESSAY" in line_check or "URAIAN" in line_check:
             current_mode = "ESSAY"
             i += 1; continue
 
         # --- 2. PROSES DATA: PILIHAN GANDA ---
         if current_mode != "ESSAY":
-            if not line_up.startswith("ANS") and len(line) > 5:
+            if not line_check.startswith("ANS") and len(line) > 5:
                 soal_text = line
                 options = []
                 ans_key = ""
@@ -53,14 +53,14 @@ def parse_docx_to_moodle(docx_file):
                 
                 while i < len(raw_lines):
                     curr = raw_lines[i]
-                    curr_up = curr.upper().strip()
+                    curr_check = curr.upper().replace(" ", "").strip()
                     
-                    # Stop jika bertemu header mode apa pun
-                    if "MULTIPLE ANSWER" in curr_up or "MULTIPLE CHOICE" in curr_up or "ESSAY" in curr_up:
+                    # Stop jika bertemu header mode apa pun (tanpa spasi)
+                    if any(m in curr_check for m in ["MULTIPLECHOICE", "MULTIPLEANSWER", "ESSAY", "URAIAN"]):
                         break
                     
-                    if curr_up.startswith("ANS"):
-                        ans_key = ",".join(re.findall(r'[A-D]', curr_up))
+                    if curr_check.startswith("ANS"):
+                        ans_key = ",".join(re.findall(r'[A-D]', curr_check))
                         found_ans = True
                         i += 1; break
                     
@@ -77,8 +77,6 @@ def parse_docx_to_moodle(docx_file):
                     xml_output += f'  <question type="multichoice">\n'
                     xml_output += f'    <name><text>Soal {global_q_num:02d}</text></name>\n'
                     xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(soal_text)}</p>]]></text></questiontext>\n'
-                    
-                    # Tag krusial untuk Moodle
                     xml_output += f'    <single>{"false" if is_multiple else "true"}</single>\n'
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
                     
@@ -105,11 +103,14 @@ def parse_docx_to_moodle(docx_file):
             found_ans_essay = False
             while i < len(raw_lines):
                 curr_line = raw_lines[i]
-                curr_up = curr_line.upper().strip()
-                if curr_up.startswith("ANS"):
+                curr_check = curr_line.upper().replace(" ", "").strip()
+                
+                if curr_check.startswith("ANS"):
                     found_ans_essay = True
                     i += 1; break
-                if "MULTIPLE" in curr_up: break
+                
+                if "MULTIPLE" in curr_check: break
+                
                 essay_text += curr_line + "<br/>"
                 i += 1
             
