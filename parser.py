@@ -7,7 +7,11 @@ def parse_docx_to_moodle(docx_file):
     FILE: parser.py
     FUNGSI: Scan data, konversi struktur soal, dan proses logika XML Moodle.
     """
-    doc = Document(docx_file)
+    try:
+        doc = Document(docx_file)
+    except Exception as e:
+        return None, {}, [], f"Error membaca file: {str(e)}"
+
     # Scan data: Ambil semua paragraf, bersihkan spasi, abaikan baris kosong
     raw_lines = [clean_line(p.text) for p in doc.paragraphs if p.text.strip()]
     
@@ -27,47 +31,46 @@ def parse_docx_to_moodle(docx_file):
         line = raw_lines[i]
         line_up = line.upper()
 
-        # --- 1. DETEKSI TRANSISI MODE (KONVERSI DATA) ---
+        # --- 1. DETEKSI TRANSISI MODE ---
         if "MULTIPLE CHOICE SET" in line_up:
             current_mode = "MULTIPLE CHOICE SET"
-            i += 1; continue
+            i += 1
+            continue
         elif "MULTIPLE CHOICE" in line_up:
             current_mode = "MULTIPLE CHOICE"
-            i += 1; continue
+            i += 1
+            continue
         elif "ESSAY" in line_up or "URAIAN" in line_up:
             current_mode = "ESSAY"
-            i += 1; continue
+            i += 1
+            continue
 
-        # --- 2. PROSES DATA: PILIHAN GANDA (SINGLE & SET) ---
+        # --- 2. PROSES DATA: PILIHAN GANDA ---
         if current_mode != "ESSAY":
-            # Baris dianggap awal soal jika bukan kunci jawaban (ANS)
             if not line_up.startswith("ANS") and len(line) > 5:
                 soal_text = line
                 options = []
                 ans_key = ""
                 i += 1
                 
-                # Kumpulkan opsi sampai bertemu penanda ANS
                 while i < len(raw_lines):
                     curr = raw_lines[i]
                     curr_up = curr.upper()
                     
-                    # Berhenti jika menabrak mode lain
-                    if any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY"]): break
+                    if any(m in curr_up for m in ["MULTIPLE CHOICE", "ESSAY", "URAIAN"]):
+                        break
                     
-                    # Deteksi Kunci Jawaban
                     if curr_up.startswith("ANS"):
                         ans_key = ",".join(re.findall(r'[A-D]', curr_up))
-                        i += 1; break
+                        i += 1
+                        break
                     
-                    # Ambil opsi (maksimal 6), sisanya sambung ke teks soal
                     if len(options) < 6:
                         options.append(curr)
                     else:
                         soal_text += "<br/>" + curr
                     i += 1
                 
-                # Generate XML untuk PG
                 if options and ans_key:
                     is_single = "SET" not in current_mode
                     xml_output += f'  <question type="multichoice">\n'
@@ -77,7 +80,7 @@ def parse_docx_to_moodle(docx_file):
                     xml_output += f'    <shuffleanswers>true</shuffleanswers>\n'
                     
                     for idx, opt in enumerate(options):
-                        lbl = chr(65 + idx) # A, B, C, D...
+                        lbl = chr(65 + idx)
                         if is_single:
                             frac = "100" if lbl in ans_key else "0"
                         else:
@@ -95,24 +98,20 @@ def parse_docx_to_moodle(docx_file):
             else:
                 i += 1
 
-        # --- 3. PROSES DATA: ESSAY (KOMPONEN: NO SOAL, ISI, ANS) ---
+        # --- 3. PROSES DATA: ESSAY ---
         else:
-            # Deteksi Nomor Soal (Auto numbering level 1: 1., 2., dst)
             match_essay = re.match(r'^(\d+)[.\s]+(.*)', line)
-            
             if match_essay:
                 num_soal = match_essay.group(1)
                 essay_content = match_essay.group(2)
                 i += 1
                 
-                # Ambil semua baris di bawahnya sampai ketemu ANS atau nomor baru
                 while i < len(raw_lines):
                     curr_line = raw_lines[i]
                     curr_up = curr_line.upper()
                     
-                    # Pemutus: Jika bertemu ANS atau Nomor Soal Baru
                     if curr_up.startswith("ANS"):
-                        i += 1 # Lewati baris ANS
+                        i += 1
                         break
                     if re.match(r'^(\d+)[.\s]+', curr_line):
                         break
@@ -120,8 +119,19 @@ def parse_docx_to_moodle(docx_file):
                     essay_content += "<br/>" + curr_line
                     i += 1
                 
-                # Generate XML untuk Essay
                 xml_output += f'  <question type="essay">\n'
                 xml_output += f'    <name><text>Soal Essay {num_soal}</text></name>\n'
                 xml_output += f'    <questiontext format="html"><text><![CDATA[<p>{wrap_arabic(essay_content)}</p>]]></text></questiontext>\n'
-                xml_output +=
+                xml_output += '    <defaultgrade>1.0000000</defaultgrade>\n'
+                xml_output += '    <responseformat>editor</responseformat>\n'
+                xml_output += '    <responserequired>1</responserequired>\n'
+                xml_output += '  </question>\n'
+                
+                stats["ESSAY"] += 1
+                q_num_internal += 1
+                audit_log.append(f"✅ Berhasil: Essay No {num_soal}")
+            else:
+                i += 1
+
+    xml_output += '</quiz>'
+    return xml_output, stats, audit_log, judul_paket
