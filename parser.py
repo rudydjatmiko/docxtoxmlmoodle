@@ -1,5 +1,5 @@
 import re
-from doc2python import doc2python
+from docx2python import docx2python
 from utils import wrap_arabic
 
 def parse_docx_to_moodle(docx_file):
