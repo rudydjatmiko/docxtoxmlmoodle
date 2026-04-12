@@ -1,44 +1,87 @@
 import streamlit as st
 from parser import parse_docx_to_moodle
 
-st.set_page_config(page_title="Docx to XML Moodle", page_icon="📝", layout="wide")
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(
+    page_title="Moodle XML Converter",
+    page_icon="📝",
+    layout="wide"
+)
 
-col_title, col_icons = st.columns([3, 1])
+# =========================
+# HEADER
+# =========================
+col1, col2 = st.columns([4,1])
 
-with col_title:
-    st.title("🌙 Moodle XML Parser")
-    st.write("Convert **MS Word (.docx)** to **Moodle XML**")
+with col1:
+    st.title("🌙 Moodle XML Converter")
+    st.caption("Convert MS Word (.docx) → Moodle XML")
 
-with col_icons:
-    st.markdown("### 🟦 ➡️ 🟧")
-    st.caption("Word → Moodle")
+with col2:
+    if st.button("🔄 Reset"):
+        st.session_state.clear()
+        st.rerun()
 
-st.markdown("---")
+st.divider()
 
-st.info("💡 Pastikan setiap soal memiliki kunci jawaban (ANS).")
+# =========================
+# UPLOAD
+# =========================
+st.info("💡 Pastikan setiap soal memiliki ANS (kunci jawaban)")
 
-uploaded_file = st.file_uploader("📂 Upload file DOCX", type="docx")
+uploaded_file = st.file_uploader(
+    "📂 Upload file DOCX",
+    type="docx"
+)
 
+# =========================
+# PROCESS
+# =========================
 if uploaded_file:
-    with st.spinner("⏳ Sedang memproses file..."):
+
+    with st.spinner("⏳ Memproses file..."):
         xml_data, stats, logs, judul = parse_docx_to_moodle(uploaded_file)
 
     if xml_data:
-        st.success(f"✅ File terdeteksi: {judul}")
 
-        st.write("### 📊 Statistik Soal")
+        # =========================
+        # SUCCESS INFO
+        # =========================
+        st.success(f"✅ File: **{judul}**")
+
+        # =========================
+        # DASHBOARD
+        # =========================
+        st.subheader("📊 Statistik Soal")
+
         c1, c2, c3 = st.columns(3)
 
-        c1.metric("📝 PG Biasa", stats.get("MULTIPLE CHOICE", 0))
-        c2.metric("📑 PG Kompleks", stats.get("MULTIPLE CHOICE SET", 0))
-        c3.metric("✍️ Essay", stats.get("ESSAY", 0))
+        with c1:
+            st.metric(
+                label="📝 PG Biasa",
+                value=stats.get("MULTIPLE CHOICE", 0)
+            )
 
-        if logs:
-            with st.expander("🔍 Audit Log"):
-                for log in logs:
-                    st.write(log)
+        with c2:
+            st.metric(
+                label="📑 PG Kompleks",
+                value=stats.get("MULTIPLE CHOICE SET", 0)
+            )
 
-        st.markdown("---")
+        with c3:
+            st.metric(
+                label="✍️ Essay",
+                value=stats.get("ESSAY", 0)
+            )
+
+        st.divider()
+
+        # =========================
+        # ACTION BUTTON
+        # =========================
+        st.subheader("⬇️ Download")
 
         st.download_button(
             label="📥 Download XML Moodle",
@@ -48,7 +91,20 @@ if uploaded_file:
             use_container_width=True
         )
 
-    else:
-        st.error(f"❌ Gagal memproses file.\n\nDetail: {judul}")
+        # =========================
+        # LOG
+        # =========================
+        if logs:
+            st.divider()
+            with st.expander("🔍 Audit Log (Klik untuk melihat detail)"):
+                for log in logs:
+                    st.write(log)
 
-st.markdown("<br><hr><center>Made with ❤️ for Educators</center>", unsafe_allow_html=True)
+    else:
+        st.error(f"❌ Gagal memproses file\n\n{judul}")
+
+# =========================
+# FOOTER
+# =========================
+st.divider()
+st.caption("Made with ❤️ for Educators")
