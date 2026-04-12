@@ -7,17 +7,17 @@ col_title, col_icons = st.columns([3, 1])
 
 with col_title:
     st.title("🌙 Moodle XML Parser")
-    st.write("Convert **MS Word** file format to **Moodle XML**")
+    st.write("Convert **MS Word (.docx)** to **Moodle XML**")
 
 with col_icons:
     st.markdown("### 🟦 ➡️ 🟧")
-    st.caption("MS Word to Moodle")
+    st.caption("Word → Moodle")
 
 st.markdown("---")
 
-st.info("💡 Pastikan format soal konsisten dan terdapat ANS pada setiap soal.")
+st.info("💡 Pastikan setiap soal memiliki kunci jawaban (ANS).")
 
-uploaded_file = st.file_uploader("📂 Upload your MS Word File (.docx)", type="docx")
+uploaded_file = st.file_uploader("📂 Upload file DOCX", type="docx")
 
 if uploaded_file:
     with st.spinner("⏳ Sedang memproses file..."):
@@ -26,11 +26,11 @@ if uploaded_file:
     if xml_data:
         st.success(f"✅ File terdeteksi: {judul}")
 
-        st.write("### 📊 Ringkasan Data")
+        st.write("### 📊 Statistik Soal")
         c1, c2, c3 = st.columns(3)
 
         c1.metric("📝 PG Biasa", stats.get("MULTIPLE CHOICE", 0))
-        c2.metric("📑 PG Kompleks", stats.get("MULTIPLE MULTI", 0))
+        c2.metric("📑 PG Kompleks", stats.get("MULTIPLE CHOICE SET", 0))
         c3.metric("✍️ Essay", stats.get("ESSAY", 0))
 
         if logs:
