@@ -3,29 +3,47 @@ import base64
 from docx import Document
 from utils import wrap_arabic
 
+
 # =========================
-# BACA DOCX (TEXT + IMAGE INLINE)
+# NORMALIZE TEXT (ANTI BUG WORD)
+# =========================
+def normalize(text):
+    return re.sub(r'\s+', ' ', text).strip().upper()
+
+
+# =========================
+# READ DOCX (TEXT + INLINE IMAGE)
 # =========================
 def read_docx_content(docx_file):
     doc = Document(docx_file)
     content = []
 
     for p in doc.paragraphs:
-        text = p.text.strip()
 
-        # cek gambar inline
+        # === IMAGE (INLINE + MATHTYPE) ===
         drawings = p._element.xpath('.//w:drawing')
 
         if drawings:
-            for rel in doc.part.rels.values():
-                if "image" in rel.target_ref:
-                    img_data = rel.target_part.blob
-                    encoded = base64.b64encode(img_data).decode()
-                    content.append({
-                        "type": "image",
-                        "data": encoded
-                    })
+            for drawing in drawings:
+                blips = drawing.xpath('.//a:blip')
 
+                for blip in blips:
+                    rId = blip.get(
+                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+                    )
+
+                    if rId in doc.part.rels:
+                        img_part = doc.part.rels[rId].target_part
+                        img_data = img_part.blob
+                        encoded = base64.b64encode(img_data).decode()
+
+                        content.append({
+                            "type": "image",
+                            "data": encoded
+                        })
+
+        # === TEXT ===
+        text = p.text.strip()
         if text:
             content.append({
                 "type": "text",
@@ -36,7 +54,7 @@ def read_docx_content(docx_file):
 
 
 # =========================
-# BUILD MC / SET
+# BUILD MC
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
@@ -46,7 +64,7 @@ def build_mc(xml, stats, logs, q_text, options, ans, q_num):
     is_multi = len(correct) > 1
 
     xml += f'<question type="multichoice">\n'
-    xml += f'<name><text>Soal {q_num}</text></name>\n'
+    xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
     xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
     xml += f'<defaultgrade>1.0</defaultgrade>\n'
     xml += f'<single>{"false" if is_multi else "true"}</single>\n'
@@ -71,18 +89,18 @@ def build_mc(xml, stats, logs, q_text, options, ans, q_num):
     else:
         stats["MULTIPLE CHOICE"] += 1
 
-    logs.append(f"✅ Soal {q_num} OK | ANS: {correct}")
+    logs.append(f"✅ Soal {q_num:02d} OK | ANS: {correct}")
     return xml, stats, logs
 
 
 # =========================
 # BUILD ESSAY
 # =========================
-def build_essay(xml, stats, logs, essay_text, ans, q_num):
+def build_essay(xml, stats, logs, q_text, ans, q_num):
 
     xml += f'<question type="essay">\n'
-    xml += f'<name><text>Essay {q_num}</text></name>\n'
-    xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay_text)}]]></text></questiontext>\n'
+    xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
+    xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
 
     if ans and ans != "-":
         xml += f'<generalfeedback format="html">\n'
@@ -92,7 +110,7 @@ def build_essay(xml, stats, logs, essay_text, ans, q_num):
     xml += '</question>\n'
 
     stats["ESSAY"] += 1
-    logs.append(f"✅ Essay {q_num}")
+    logs.append(f"✅ Essay {q_num:02d}")
     return xml, stats, logs
 
 
@@ -126,17 +144,16 @@ def parse_docx_to_moodle(docx_file):
 
     for item in content:
 
-        # ================= TEXT =================
         if item["type"] == "text":
             line = item["data"]
-            up = line.upper().strip()
+            norm = normalize(line)
 
-            # ===== MODE FIX (EXACT MATCH) =====
-            if re.fullmatch(r'MULTIPLE\s*CHOICE', up):
+            # ================= MODE =================
+            if "MULTIPLE" in norm and "CHOICE" in norm:
                 mode = "MC"
                 continue
 
-            if re.fullmatch(r'ESSAY|URAIAN', up):
+            if norm in ["ESSAY", "URAIAN"]:
                 mode = "ESSAY"
                 q_text = ""
                 continue
@@ -144,7 +161,20 @@ def parse_docx_to_moodle(docx_file):
             # ================= ESSAY =================
             if mode == "ESSAY":
 
-                if up.startswith("ANS"):
+                match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
+
+                if match_q:
+                    if q_text:
+                        xml, stats, logs = build_essay(
+                            xml, stats, logs, q_text, ans, q_num
+                        )
+                        q_num += 1
+
+                    q_text = match_q.group(2)
+                    ans = ""
+                    continue
+
+                if norm.startswith("ANS"):
                     match_ans = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
                     ans = match_ans.group(1).strip() if match_ans else ""
 
@@ -152,7 +182,9 @@ def parse_docx_to_moodle(docx_file):
                         xml, stats, logs, q_text, ans, q_num
                     )
                     q_num += 1
+
                     q_text = ""
+                    ans = ""
                     continue
 
                 q_text += line + "<br/>"
@@ -163,7 +195,6 @@ def parse_docx_to_moodle(docx_file):
 
             if match_q:
 
-                # simpan soal sebelumnya
                 if q_text:
                     if options and ans:
                         xml, stats, logs = build_mc(
@@ -171,20 +202,18 @@ def parse_docx_to_moodle(docx_file):
                         )
                         q_num += 1
                     else:
-                        logs.append(f"❌ Soal {q_num} tidak lengkap")
+                        logs.append(f"❌ Soal {q_num:02d} tidak lengkap")
 
                 q_text = match_q.group(2)
                 options = []
                 ans = ""
                 continue
 
-            # ===== ANS =====
-            if up.startswith("ANS"):
-                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
+            if norm.startswith("ANS"):
+                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
                 ans = match_ans.group(1) if match_ans else ""
                 continue
 
-            # ===== OPSI =====
             match_opt = re.match(r'^([A-Da-d])[.\s)\-:]+(.*)', line)
 
             if match_opt:
@@ -204,7 +233,7 @@ def parse_docx_to_moodle(docx_file):
             else:
                 q_text += img_html
 
-    # simpan soal terakhir
+    # ================= FINAL SAVE =================
     if q_text and options and ans:
         xml, stats, logs = build_mc(
             xml, stats, logs, q_text, options, ans, q_num
