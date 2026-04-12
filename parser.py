@@ -5,7 +5,7 @@ from docx import Document
 from utils import wrap_arabic
 
 # =========================
-# AMBIL GAMBAR DARI DOCX
+# AMBIL GAMBAR
 # =========================
 def extract_images(docx_file):
     doc = Document(docx_file)
@@ -20,7 +20,7 @@ def extract_images(docx_file):
     return images
 
 # =========================
-# MAIN PARSER
+# PARSER UTAMA
 # =========================
 def parse_docx_to_moodle(docx_file):
     try:
@@ -30,119 +30,123 @@ def parse_docx_to_moodle(docx_file):
     except Exception as e:
         return None, {}, [], f"Error membaca file: {str(e)}"
 
-    # ambil semua gambar
+    if len(raw_lines) < 3:
+        return None, {}, [], "Dokumen tidak valid."
+
     images = extract_images(docx_file)
     img_index = 0
 
-    if len(raw_lines) < 3:
-        return None, {}, [], "Dokumen tidak valid atau kosong."
-
     judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
-    xml_output = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
-
-    current_mode = "MULTIPLE CHOICE"
-    global_q_num = 1 
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
         "MULTIPLE CHOICE": 0,
+        "MULTIPLE CHOICE SET": 0,
         "ESSAY": 0
     }
 
-    audit_log = []
-
+    logs = []
     i = 0
+    q_num = 1
+    mode = "MC"
+
     while i < len(raw_lines):
         line = raw_lines[i]
-        line_up = line.upper().strip()
-        clean_header = re.sub(r'[^A-Z]', '', line_up)
+        up = line.upper()
+        clean = re.sub(r'[^A-Z]', '', up)
 
         # ================= MODE =================
-        if "MULTIPLECHOICE" in clean_header:
-            current_mode = "MULTIPLE CHOICE"
-            i += 1; continue
+        if "MULTIPLECHOICE" in clean:
+            mode = "MC"
+            i += 1
+            continue
 
-        elif "ESSAY" in clean_header or "URAIAN" in clean_header:
-            current_mode = "ESSAY"
-            i += 1; continue
+        if "ESSAY" in clean or "URAIAN" in clean:
+            mode = "ESSAY"
+            i += 1
+            continue
 
         # ================= PILIHAN GANDA =================
-        if current_mode != "ESSAY":
+        if mode != "ESSAY":
 
-            match_soal = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
+            match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
-            if match_soal:
-                soal_text = match_soal.group(2)
+            if match_q:
+                q_text = match_q.group(2)
                 options = []
-                ans_key = ""
+                ans = ""
                 found_ans = False
                 i += 1
 
-                # 🔥 jika ada gambar, sisipkan ke soal
+                # sisipkan gambar (jika ada)
                 if img_index < len(images):
-                    soal_text += f'<br><img src="data:image/png;base64,{images[img_index]}" />'
+                    q_text += f'<br><img src="data:image/png;base64,{images[img_index]}" />'
                     img_index += 1
 
                 while i < len(raw_lines):
                     curr = raw_lines[i]
-                    curr_up = curr.upper().strip()
-                    curr_clean = re.sub(r'[^A-Z]', '', curr_up)
+                    curr_up = curr.upper()
 
-                    if any(m in curr_clean for m in ["MULTIPLECHOICE", "ESSAY", "URAIAN"]):
-                        break
                     if re.match(r'^\d+[.\s)\-:]+', curr):
                         break
 
-                    # ANS
                     if curr_up.startswith("ANS"):
-                        ans_key = ",".join(re.findall(r'[A-Z]', curr_up))
+                        ans = ",".join(re.findall(r'[A-Z]', curr_up))
                         found_ans = True
                         i += 1
                         break
 
-                    # OPSI
                     match_opt = re.match(r'^([a-zA-Z])[.\s)\-:]+(.*)', curr)
                     if match_opt:
                         options.append(match_opt.group(2))
                     else:
                         if not options:
-                            soal_text += " " + curr
+                            q_text += " " + curr
                         else:
                             options[-1] += " " + curr
                     i += 1
 
                 # VALIDASI
-                if not found_ans or len(options) < 2:
-                    audit_log.append(f"❌ Soal {global_q_num} tidak valid")
+                if not found_ans:
+                    logs.append(f"❌ Soal {q_num} tanpa ANS")
                     continue
 
-                # DETEKSI SINGLE / MULTI
-                correct_list = ans_key.split(",")
-                is_multiple = len(correct_list) > 1
+                if len(options) < 2:
+                    logs.append(f"❌ Soal {q_num} opsi kurang")
+                    continue
+
+                correct = [x.strip() for x in ans.split(",") if x.strip()]
+                is_multi = len(correct) > 1
 
                 # ================= XML =================
-                xml_output += f'<question type="multichoice">\n'
-                xml_output += f'<name><text>Soal {global_q_num}</text></name>\n'
-                xml_output += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(soal_text)}]]></text></questiontext>\n'
-                xml_output += f'<defaultgrade>1.0</defaultgrade>\n'
-                xml_output += f'<single>{"false" if is_multiple else "true"}</single>\n'
+                xml += f'<question type="multichoice">\n'
+                xml += f'<name><text>Soal {q_num}</text></name>\n'
+                xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
+                xml += f'<defaultgrade>1.0</defaultgrade>\n'
+                xml += f'<single>{"false" if is_multi else "true"}</single>\n'
+                xml += f'<shuffleanswers>true</shuffleanswers>\n'
 
                 for idx, opt in enumerate(options):
-                    lbl = chr(65 + idx)
+                    label = chr(65 + idx)
 
-                    if is_multiple:
-                        frac = str(100/len(correct_list)) if lbl in correct_list else "0"
+                    if is_multi:
+                        frac = str(round(100/len(correct), 5)) if label in correct else "0"
                     else:
-                        frac = "100" if lbl in correct_list else "0"
+                        frac = "100" if label in correct else "0"
 
-                    xml_output += f'<answer fraction="{frac}">\n'
-                    xml_output += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
-                    xml_output += f'</answer>\n'
+                    xml += f'<answer fraction="{frac}">\n'
+                    xml += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
+                    xml += f'</answer>\n'
 
-                xml_output += '</question>\n'
+                xml += '</question>\n'
 
-                stats["MULTIPLE CHOICE"] += 1
-                audit_log.append(f"✅ Soal {global_q_num} OK")
-                global_q_num += 1
+                if is_multi:
+                    stats["MULTIPLE CHOICE SET"] += 1
+                else:
+                    stats["MULTIPLE CHOICE"] += 1
+
+                logs.append(f"✅ Soal {q_num} OK")
+                q_num += 1
                 continue
 
             else:
@@ -150,28 +154,28 @@ def parse_docx_to_moodle(docx_file):
 
         # ================= ESSAY =================
         else:
-            essay_text = ""
+            essay = ""
 
             while i < len(raw_lines):
-                curr_line = raw_lines[i]
+                curr = raw_lines[i]
 
-                if curr_line.upper().startswith("ANS"):
+                if curr.upper().startswith("ANS"):
                     i += 1
                     break
 
-                essay_text += curr_line + "<br/>"
+                essay += curr + "<br/>"
                 i += 1
 
-            if essay_text.strip():
-                xml_output += f'<question type="essay">\n'
-                xml_output += f'<name><text>Essay {global_q_num}</text></name>\n'
-                xml_output += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay_text)}]]></text></questiontext>\n'
-                xml_output += '</question>\n'
+            if essay.strip():
+                xml += f'<question type="essay">\n'
+                xml += f'<name><text>Essay {q_num}</text></name>\n'
+                xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay)}]]></text></questiontext>\n'
+                xml += '</question>\n'
 
                 stats["ESSAY"] += 1
-                audit_log.append(f"✅ Essay {global_q_num}")
-                global_q_num += 1
+                logs.append(f"✅ Essay {q_num}")
+                q_num += 1
 
-    xml_output += '</quiz>'
+    xml += '</quiz>'
 
-    return xml_output, stats, audit_log, judul_paket
+    return xml, stats, logs, judul_paket
