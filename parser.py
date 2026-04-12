@@ -1,44 +1,52 @@
 import re
 import base64
-from docx2python import docx2python
 from docx import Document
 from utils import wrap_arabic
 
 # =========================
-# AMBIL GAMBAR
+# AMBIL TEKS + GAMBAR BERURUTAN
 # =========================
-def extract_images(docx_file):
+def read_docx_content(docx_file):
     doc = Document(docx_file)
-    images = []
+    content = []
 
-    for rel in doc.part.rels.values():
-        if "image" in rel.target_ref:
-            image_data = rel.target_part.blob
-            encoded = base64.b64encode(image_data).decode("utf-8")
-            images.append(encoded)
+    for p in doc.paragraphs:
+        text = p.text.strip()
 
-    return images
+        # cek gambar inline
+        drawings = p._element.xpath('.//w:drawing')
+
+        if drawings:
+            for rel in doc.part.rels.values():
+                if "image" in rel.target_ref:
+                    img_data = rel.target_part.blob
+                    encoded = base64.b64encode(img_data).decode()
+
+                    content.append({
+                        "type": "image",
+                        "data": encoded
+                    })
+
+        if text:
+            content.append({
+                "type": "text",
+                "data": text
+            })
+
+    return content
 
 
 # =========================
 # PARSER UTAMA
 # =========================
 def parse_docx_to_moodle(docx_file):
-    try:
-        with docx2python(docx_file) as doc_extract:
-            full_text = doc_extract.text
-            raw_lines = [line.strip() for line in full_text.split('\n') if line.strip()]
-    except Exception as e:
-        return None, {}, [], f"Error membaca file: {str(e)}"
 
-    if len(raw_lines) < 3:
+    content = read_docx_content(docx_file)
+
+    if len(content) < 3:
         return None, {}, [], "Dokumen tidak valid."
 
-    # ambil gambar
-    images = extract_images(docx_file)
-    img_index = 0
-
-    judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
+    judul_paket = f"{content[0]['data']} - {content[1]['data']}"
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
@@ -48,151 +56,116 @@ def parse_docx_to_moodle(docx_file):
     }
 
     logs = []
-    i = 0
     q_num = 1
     mode = "MC"
 
-    while i < len(raw_lines):
-        line = raw_lines[i]
-        up = line.upper()
-        clean = re.sub(r'[^A-Z]', '', up)
+    q_text = ""
+    options = []
+    ans = ""
 
-        # ================= MODE =================
-        if "MULTIPLECHOICE" in clean:
-            mode = "MC"
-            i += 1
-            continue
+    for item in content:
 
-        if "ESSAY" in clean or "URAIAN" in clean:
-            mode = "ESSAY"
-            i += 1
-            continue
+        # ================= TEXT =================
+        if item["type"] == "text":
+            line = item["data"]
+            up = line.upper()
+            clean = re.sub(r'[^A-Z]', '', up)
 
-        # ================= PILIHAN GANDA =================
-        if mode != "ESSAY":
+            # MODE
+            if "MULTIPLECHOICE" in clean:
+                mode = "MC"
+                continue
 
+            if "ESSAY" in clean or "URAIAN" in clean:
+                mode = "ESSAY"
+                continue
+
+            # ================= SOAL BARU =================
             match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
             if match_q:
+                # simpan soal sebelumnya
+                if q_text and options and ans:
+                    xml, stats, logs = build_question(
+                        xml, stats, logs, q_text, options, ans, q_num
+                    )
+                    q_num += 1
+
                 q_text = match_q.group(2)
                 options = []
                 ans = ""
-                found_ans = False
-                i += 1
-
-                # sisipkan gambar jika ada
-                if img_index < len(images):
-                    q_text += f'<br><img src="data:image/png;base64,{images[img_index]}" />'
-                    img_index += 1
-
-                while i < len(raw_lines):
-                    curr = raw_lines[i]
-                    curr_up = curr.upper()
-
-                    # stop jika soal baru
-                    if re.match(r'^\d+[.\s)\-:]+', curr):
-                        break
-
-                    # ================= FIX ANS =================
-                    if curr_up.startswith("ANS"):
-                        match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', curr_up)
-                        if match_ans:
-                            ans = match_ans.group(1)
-                            ans = ",".join([x.strip() for x in ans.split(",") if x.strip()])
-                        else:
-                            ans = ""
-
-                        found_ans = True
-                        i += 1
-                        break
-
-                    # ================= OPSI =================
-                    match_opt = re.match(r'^([a-zA-Z])[.\s)\-:]+(.*)', curr)
-                    if match_opt:
-                        options.append(match_opt.group(2))
-                    else:
-                        if not options:
-                            q_text += " " + curr
-                        else:
-                            options[-1] += " " + curr
-                    i += 1
-
-                # ================= VALIDASI =================
-                if not found_ans:
-                    logs.append(f"❌ Soal {q_num} tanpa ANS")
-                    continue
-
-                if len(options) < 2:
-                    logs.append(f"❌ Soal {q_num} opsi kurang")
-                    continue
-
-                # ================= DETEKSI MULTI =================
-                correct = [x.strip() for x in ans.split(",") if x.strip()]
-                correct = list(dict.fromkeys(correct))  # hapus duplikat
-
-                is_multi = len(correct) > 1
-
-                logs.append(f"Soal {q_num} → ANS parsed: {correct}")
-
-                # ================= XML =================
-                xml += f'<question type="multichoice">\n'
-                xml += f'<name><text>Soal {q_num}</text></name>\n'
-                xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
-                xml += f'<defaultgrade>1.0</defaultgrade>\n'
-                xml += f'<single>{"false" if is_multi else "true"}</single>\n'
-                xml += f'<shuffleanswers>true</shuffleanswers>\n'
-
-                for idx, opt in enumerate(options):
-                    label = chr(65 + idx)
-
-                    if is_multi:
-                        frac = str(round(100/len(correct), 5)) if label in correct else "0"
-                    else:
-                        frac = "100" if label in correct else "0"
-
-                    xml += f'<answer fraction="{frac}">\n'
-                    xml += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
-                    xml += f'</answer>\n'
-
-                xml += '</question>\n'
-
-                # ================= STATS =================
-                if is_multi:
-                    stats["MULTIPLE CHOICE SET"] += 1
-                else:
-                    stats["MULTIPLE CHOICE"] += 1
-
-                logs.append(f"✅ Soal {q_num} OK")
-                q_num += 1
                 continue
 
+            # ================= ANS =================
+            if up.startswith("ANS"):
+                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
+                if match_ans:
+                    ans = match_ans.group(1)
+                continue
+
+            # ================= OPSI =================
+            match_opt = re.match(r'^([A-Da-d])[.\s)\-:]+(.*)', line)
+            if match_opt:
+                options.append(match_opt.group(2))
             else:
-                i += 1
+                if options:
+                    options[-1] += "<br/>" + line
+                else:
+                    q_text += "<br/>" + line
 
-        # ================= ESSAY =================
-        else:
-            essay = ""
+        # ================= IMAGE =================
+        elif item["type"] == "image":
+            img_html = f'<br><img src="data:image/png;base64,{item["data"]}" />'
 
-            while i < len(raw_lines):
-                curr = raw_lines[i]
+            if options:
+                options[-1] += img_html
+            else:
+                q_text += img_html
 
-                if curr.upper().startswith("ANS"):
-                    i += 1
-                    break
-
-                essay += curr + "<br/>"
-                i += 1
-
-            if essay.strip():
-                xml += f'<question type="essay">\n'
-                xml += f'<name><text>Essay {q_num}</text></name>\n'
-                xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay)}]]></text></questiontext>\n'
-                xml += '</question>\n'
-
-                stats["ESSAY"] += 1
-                logs.append(f"✅ Essay {q_num}")
-                q_num += 1
+    # simpan soal terakhir
+    if q_text and options and ans:
+        xml, stats, logs = build_question(
+            xml, stats, logs, q_text, options, ans, q_num
+        )
 
     xml += '</quiz>'
-
     return xml, stats, logs, judul_paket
+
+
+# =========================
+# BUILD XML
+# =========================
+def build_question(xml, stats, logs, q_text, options, ans, q_num):
+
+    correct = [x.strip() for x in ans.split(",") if x.strip()]
+    correct = list(dict.fromkeys(correct))
+
+    is_multi = len(correct) > 1
+
+    xml += f'<question type="multichoice">\n'
+    xml += f'<name><text>Soal {q_num}</text></name>\n'
+    xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
+    xml += f'<defaultgrade>1.0</defaultgrade>\n'
+    xml += f'<single>{"false" if is_multi else "true"}</single>\n'
+
+    for i, opt in enumerate(options):
+        label = chr(65 + i)
+
+        if is_multi:
+            frac = str(100/len(correct)) if label in correct else "0"
+        else:
+            frac = "100" if label in correct else "0"
+
+        xml += f'<answer fraction="{frac}">\n'
+        xml += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
+        xml += f'</answer>\n'
+
+    xml += '</question>\n'
+
+    if is_multi:
+        stats["MULTIPLE CHOICE SET"] += 1
+    else:
+        stats["MULTIPLE CHOICE"] += 1
+
+    logs.append(f"✅ Soal {q_num}")
+    return xml, stats, logs
