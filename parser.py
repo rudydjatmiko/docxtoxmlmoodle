@@ -5,14 +5,14 @@ from utils import wrap_arabic
 
 
 # =========================
-# NORMALIZE TEXT (ANTI BUG WORD)
+# NORMALIZE TEXT
 # =========================
 def normalize(text):
     return re.sub(r'\s+', ' ', text).strip().upper()
 
 
 # =========================
-# READ DOCX (TEXT + INLINE IMAGE)
+# READ DOCX (TEXT + IMAGE INLINE)
 # =========================
 def read_docx_content(docx_file):
     doc = Document(docx_file)
@@ -20,7 +20,7 @@ def read_docx_content(docx_file):
 
     for p in doc.paragraphs:
 
-        # === IMAGE (INLINE + MATHTYPE) ===
+        # === IMAGE (INLINE / MATHTYPE) ===
         drawings = p._element.xpath('.//w:drawing')
 
         if drawings:
@@ -54,7 +54,7 @@ def read_docx_content(docx_file):
 
 
 # =========================
-# BUILD MC
+# BUILD MULTIPLE CHOICE
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
@@ -125,6 +125,7 @@ def parse_docx_to_moodle(docx_file):
         return None, {}, [], "Dokumen tidak valid."
 
     judul_paket = f"{content[0]['data']} - {content[1]['data']}"
+
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
@@ -149,13 +150,13 @@ def parse_docx_to_moodle(docx_file):
             norm = normalize(line)
 
             # ================= MODE =================
-            if "MULTIPLE" in norm and "CHOICE" in norm:
-                mode = "MC"
-                continue
-
-            if norm in ["ESSAY", "URAIAN"]:
+            if norm == "ESSAY":
                 mode = "ESSAY"
                 q_text = ""
+                continue
+
+            elif "MULTIPLE" in norm and "CHOICE" in norm:
+                mode = "MC"
                 continue
 
             # ================= ESSAY =================
@@ -164,12 +165,6 @@ def parse_docx_to_moodle(docx_file):
                 match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
                 if match_q:
-                    if q_text:
-                        xml, stats, logs = build_essay(
-                            xml, stats, logs, q_text, ans, q_num
-                        )
-                        q_num += 1
-
                     q_text = match_q.group(2)
                     ans = ""
                     continue
@@ -187,10 +182,10 @@ def parse_docx_to_moodle(docx_file):
                     ans = ""
                     continue
 
-                q_text += line + "<br/>"
+                q_text += "<br/>" + line
                 continue
 
-            # ================= MC =================
+            # ================= MULTIPLE CHOICE =================
             match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
             if match_q:
