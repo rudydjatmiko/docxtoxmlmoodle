@@ -29,7 +29,7 @@ st.divider()
 # =========================
 # UPLOAD
 # =========================
-st.info("💡 Pastikan setiap soal memiliki ANS (kunci jawaban)")
+st.info("💡 Pastikan file yang diupload berupa file docx dengan format ANS, memiliki tipe soal (MULTIPLE CHOICE, atau ESSAY), disertai kunci jawaban ANS: ...")
 
 uploaded_file = st.file_uploader(
     "📂 Upload file DOCX",
