@@ -1,5 +1,6 @@
 import re
 import base64
+from doc2python import doc2python
 from docx import Document
 from utils import wrap_arabic
 
@@ -8,67 +9,41 @@ from utils import wrap_arabic
 # NORMALIZE TEXT
 # =========================
 def normalize(text):
+    text = text.replace('\xa0', ' ')
+    text = text.replace('\u200b', '')
+    text = text.replace('\t', ' ')
     return re.sub(r'\s+', ' ', text).strip().upper()
 
 
 # =========================
-# READ DOCX (TEXT + IMAGE INLINE)
+# AMBIL GAMBAR DARI DOCX
 # =========================
-def read_docx_content(docx_file):
+def extract_images(docx_file):
     doc = Document(docx_file)
-    content = []
+    images = []
 
-    for p in doc.paragraphs:
+    for rel in doc.part.rels.values():
+        if "image" in rel.target_ref:
+            img_data = rel.target_part.blob
+            encoded = base64.b64encode(img_data).decode()
+            images.append(encoded)
 
-        # === IMAGE (INLINE / MATHTYPE) ===
-        drawings = p._element.xpath('.//w:drawing')
-
-        if drawings:
-            for drawing in drawings:
-                blips = drawing.xpath('.//a:blip')
-
-                for blip in blips:
-                    rId = blip.get(
-                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
-                    )
-
-                    if rId in doc.part.rels:
-                        img_part = doc.part.rels[rId].target_part
-                        img_data = img_part.blob
-                        encoded = base64.b64encode(img_data).decode()
-
-                        content.append({
-                            "type": "image",
-                            "data": encoded
-                        })
-
-        # === TEXT ===
-        text = p.text.strip()
-        if text:
-            content.append({
-                "type": "text",
-                "data": text
-            })
-
-    return content
+    return images
 
 
 # =========================
-# BUILD MULTIPLE CHOICE
+# BUILD MC
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
     correct = [x.strip() for x in ans.split(",") if x.strip()]
     correct = list(dict.fromkeys(correct))
-
     is_multi = len(correct) > 1
 
     xml += f'<question type="multichoice">\n'
     xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
     xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
-    xml += f'<defaultgrade>1.0</defaultgrade>\n'
     xml += f'<single>{"false" if is_multi else "true"}</single>\n'
-    xml += f'<shuffleanswers>true</shuffleanswers>\n'
 
     for i, opt in enumerate(options):
         label = chr(65 + i)
@@ -89,7 +64,7 @@ def build_mc(xml, stats, logs, q_text, options, ans, q_num):
     else:
         stats["MULTIPLE CHOICE"] += 1
 
-    logs.append(f"✅ Soal {q_num:02d} OK | ANS: {correct}")
+    logs.append(f"✅ Soal {q_num:02d} | ANS: {correct}")
     return xml, stats, logs
 
 
@@ -115,16 +90,24 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
 
 
 # =========================
-# PARSER UTAMA
+# PARSER UTAMA (HYBRID)
 # =========================
 def parse_docx_to_moodle(docx_file):
 
-    content = read_docx_content(docx_file)
+    try:
+        # ===== TEXT VIA DOC2PYTHON =====
+        with doc2python(docx_file) as doc:
+            raw_text = doc.text
 
-    if len(content) < 3:
+        raw_lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+
+    except Exception as e:
+        return None, {}, [], f"Error membaca file: {str(e)}"
+
+    if len(raw_lines) < 3:
         return None, {}, [], "Dokumen tidak valid."
 
-    judul_paket = f"{content[0]['data']} - {content[1]['data']}"
+    judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
 
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
@@ -137,102 +120,70 @@ def parse_docx_to_moodle(docx_file):
     logs = []
 
     q_num = 1
-    mode = "MC"
-
     q_text = ""
     options = []
     ans = ""
 
-    for item in content:
+    for line in raw_lines:
 
-        if item["type"] == "text":
-            line = item["data"]
-            norm = normalize(line)
+        norm = normalize(line)
 
-            # ================= MODE =================
-            if norm == "ESSAY":
-                mode = "ESSAY"
-                q_text = ""
-                continue
+        # ================= SOAL BARU =================
+        match_q = re.match(r'^(\d+)[.\s]+(.*)', line)
 
-            elif "MULTIPLE" in norm and "CHOICE" in norm:
-                mode = "MC"
-                continue
+        if match_q:
 
-            # ================= ESSAY =================
-            if mode == "ESSAY":
-
-                match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
-
-                if match_q:
-                    q_text = match_q.group(2)
-                    ans = ""
-                    continue
-
-                if norm.startswith("ANS"):
-                    match_ans = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
-                    ans = match_ans.group(1).strip() if match_ans else ""
-
+            # simpan soal sebelumnya
+            if q_text:
+                if options:
+                    xml, stats, logs = build_mc(
+                        xml, stats, logs, q_text, options, ans, q_num
+                    )
+                else:
                     xml, stats, logs = build_essay(
                         xml, stats, logs, q_text, ans, q_num
                     )
-                    q_num += 1
+                q_num += 1
 
-                    q_text = ""
-                    ans = ""
-                    continue
+            q_text = match_q.group(2)
+            options = []
+            ans = ""
+            continue
 
-                q_text += "<br/>" + line
-                continue
+        # ================= ANS =================
+        if norm.startswith("ANS"):
 
-            # ================= MULTIPLE CHOICE =================
-            match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
-
-            if match_q:
-
-                if q_text:
-                    if options and ans:
-                        xml, stats, logs = build_mc(
-                            xml, stats, logs, q_text, options, ans, q_num
-                        )
-                        q_num += 1
-                    else:
-                        logs.append(f"❌ Soal {q_num:02d} tidak lengkap")
-
-                q_text = match_q.group(2)
-                options = []
-                ans = ""
-                continue
-
-            if norm.startswith("ANS"):
-                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
-                ans = match_ans.group(1) if match_ans else ""
-                continue
-
-            match_opt = re.match(r'^([A-Da-d])[.\s)\-:]+(.*)', line)
-
-            if match_opt:
-                options.append(match_opt.group(2))
-            else:
-                if options:
-                    options[-1] += "<br/>" + line
-                else:
-                    q_text += "<br/>" + line
-
-        # ================= IMAGE =================
-        elif item["type"] == "image":
-            img_html = f'<br><img src="data:image/png;base64,{item["data"]}" />'
+            match_ans_mc = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
+            match_ans_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
 
             if options:
-                options[-1] += img_html
+                ans = match_ans_mc.group(1) if match_ans_mc else ""
             else:
-                q_text += img_html
+                ans = match_ans_es.group(1) if match_ans_es else ""
 
-    # ================= FINAL SAVE =================
-    if q_text and options and ans:
-        xml, stats, logs = build_mc(
-            xml, stats, logs, q_text, options, ans, q_num
-        )
+            continue
+
+        # ================= OPSI =================
+        match_opt = re.match(r'^([A-Da-d])[.\s]+(.*)', line)
+
+        if match_opt:
+            options.append(match_opt.group(2))
+        else:
+            if options:
+                options[-1] += "<br/>" + line
+            else:
+                q_text += "<br/>" + line
+
+    # ================= SOAL TERAKHIR =================
+    if q_text:
+        if options:
+            xml, stats, logs = build_mc(
+                xml, stats, logs, q_text, options, ans, q_num
+            )
+        else:
+            xml, stats, logs = build_essay(
+                xml, stats, logs, q_text, ans, q_num
+            )
 
     xml += '</quiz>'
 
