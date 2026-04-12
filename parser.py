@@ -1,6 +1,6 @@
 import re
 import base64
-from doc2python import doc2python
+from doc2xpython import docx2python
 from docx import Document
 from utils import wrap_arabic
 
