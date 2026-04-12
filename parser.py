@@ -4,7 +4,7 @@ from utils import wrap_arabic
 
 def parse_docx_to_moodle(docx_file):
     try:
-        with doc2python(docx_file) as doc_extract:
+        with docx2python(docx_file) as doc_extract:
             full_text = doc_extract.text
             raw_lines = [line.strip() for line in full_text.split('\n') if line.strip()]
     except Exception as e:
