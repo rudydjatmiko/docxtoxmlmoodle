@@ -36,7 +36,7 @@ def read_docx_content(docx_file):
 
 
 # =========================
-# BUILD QUESTION (MC / SET)
+# BUILD MC / SET
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
@@ -84,7 +84,6 @@ def build_essay(xml, stats, logs, essay_text, ans, q_num):
     xml += f'<name><text>Essay {q_num}</text></name>\n'
     xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay_text)}]]></text></questiontext>\n'
 
-    # Optional: tampilkan kunci sebagai feedback
     if ans and ans != "-":
         xml += f'<generalfeedback format="html">\n'
         xml += f'<text><![CDATA[<b>Referensi jawaban:</b><br>{wrap_arabic(ans)}]]></text>\n'
@@ -108,7 +107,6 @@ def parse_docx_to_moodle(docx_file):
         return None, {}, [], "Dokumen tidak valid."
 
     judul_paket = f"{content[0]['data']} - {content[1]['data']}"
-
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
@@ -125,33 +123,47 @@ def parse_docx_to_moodle(docx_file):
     q_text = ""
     options = []
     ans = ""
-    essay_mode = False
 
     for item in content:
 
         # ================= TEXT =================
         if item["type"] == "text":
             line = item["data"]
-            up = line.upper()
-            clean = re.sub(r'[^A-Z]', '', up)
+            up = line.upper().strip()
 
-            # ===== MODE =====
-            if "MULTIPLECHOICE" in clean:
+            # ===== MODE FIX (EXACT MATCH) =====
+            if re.fullmatch(r'MULTIPLE\s*CHOICE', up):
                 mode = "MC"
-                essay_mode = False
                 continue
 
-            if "ESSAY" in clean or "URAIAN" in clean:
+            if re.fullmatch(r'ESSAY|URAIAN', up):
                 mode = "ESSAY"
-                essay_mode = True
                 q_text = ""
                 continue
 
-            # ===== SOAL BARU =====
+            # ================= ESSAY =================
+            if mode == "ESSAY":
+
+                if up.startswith("ANS"):
+                    match_ans = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
+                    ans = match_ans.group(1).strip() if match_ans else ""
+
+                    xml, stats, logs = build_essay(
+                        xml, stats, logs, q_text, ans, q_num
+                    )
+                    q_num += 1
+                    q_text = ""
+                    continue
+
+                q_text += line + "<br/>"
+                continue
+
+            # ================= MC =================
             match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
-            if match_q and not essay_mode:
+            if match_q:
 
+                # simpan soal sebelumnya
                 if q_text:
                     if options and ans:
                         xml, stats, logs = build_mc(
@@ -168,48 +180,29 @@ def parse_docx_to_moodle(docx_file):
 
             # ===== ANS =====
             if up.startswith("ANS"):
-
-                if mode == "ESSAY":
-                    match_ans = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
-                    ans = match_ans.group(1).strip() if match_ans else ""
-
-                    xml, stats, logs = build_essay(
-                        xml, stats, logs, q_text, ans, q_num
-                    )
-                    q_num += 1
-                    q_text = ""
-                    continue
-
-                else:
-                    match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
-                    ans = match_ans.group(1) if match_ans else ""
-                    continue
+                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
+                ans = match_ans.group(1) if match_ans else ""
+                continue
 
             # ===== OPSI =====
             match_opt = re.match(r'^([A-Da-d])[.\s)\-:]+(.*)', line)
 
-            if match_opt and not essay_mode:
+            if match_opt:
                 options.append(match_opt.group(2))
             else:
-                if essay_mode:
-                    q_text += line + "<br/>"
+                if options:
+                    options[-1] += "<br/>" + line
                 else:
-                    if options:
-                        options[-1] += "<br/>" + line
-                    else:
-                        q_text += "<br/>" + line
+                    q_text += "<br/>" + line
 
         # ================= IMAGE =================
         elif item["type"] == "image":
             img_html = f'<br><img src="data:image/png;base64,{item["data"]}" />'
 
-            if essay_mode:
-                q_text += img_html
+            if options:
+                options[-1] += img_html
             else:
-                if options:
-                    options[-1] += img_html
-                else:
-                    q_text += img_html
+                q_text += img_html
 
     # simpan soal terakhir
     if q_text and options and ans:
