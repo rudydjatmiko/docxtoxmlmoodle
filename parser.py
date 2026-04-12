@@ -19,6 +19,7 @@ def extract_images(docx_file):
 
     return images
 
+
 # =========================
 # PARSER UTAMA
 # =========================
@@ -33,6 +34,7 @@ def parse_docx_to_moodle(docx_file):
     if len(raw_lines) < 3:
         return None, {}, [], "Dokumen tidak valid."
 
+    # ambil gambar
     images = extract_images(docx_file)
     img_index = 0
 
@@ -78,7 +80,7 @@ def parse_docx_to_moodle(docx_file):
                 found_ans = False
                 i += 1
 
-                # sisipkan gambar (jika ada)
+                # sisipkan gambar jika ada
                 if img_index < len(images):
                     q_text += f'<br><img src="data:image/png;base64,{images[img_index]}" />'
                     img_index += 1
@@ -87,15 +89,24 @@ def parse_docx_to_moodle(docx_file):
                     curr = raw_lines[i]
                     curr_up = curr.upper()
 
+                    # stop jika soal baru
                     if re.match(r'^\d+[.\s)\-:]+', curr):
                         break
 
+                    # ================= FIX ANS =================
                     if curr_up.startswith("ANS"):
-                        ans = ",".join(re.findall(r'[A-Z]', curr_up))
+                        match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', curr_up)
+                        if match_ans:
+                            ans = match_ans.group(1)
+                            ans = ",".join([x.strip() for x in ans.split(",") if x.strip()])
+                        else:
+                            ans = ""
+
                         found_ans = True
                         i += 1
                         break
 
+                    # ================= OPSI =================
                     match_opt = re.match(r'^([a-zA-Z])[.\s)\-:]+(.*)', curr)
                     if match_opt:
                         options.append(match_opt.group(2))
@@ -106,7 +117,7 @@ def parse_docx_to_moodle(docx_file):
                             options[-1] += " " + curr
                     i += 1
 
-                # VALIDASI
+                # ================= VALIDASI =================
                 if not found_ans:
                     logs.append(f"❌ Soal {q_num} tanpa ANS")
                     continue
@@ -115,8 +126,13 @@ def parse_docx_to_moodle(docx_file):
                     logs.append(f"❌ Soal {q_num} opsi kurang")
                     continue
 
+                # ================= DETEKSI MULTI =================
                 correct = [x.strip() for x in ans.split(",") if x.strip()]
+                correct = list(dict.fromkeys(correct))  # hapus duplikat
+
                 is_multi = len(correct) > 1
+
+                logs.append(f"Soal {q_num} → ANS parsed: {correct}")
 
                 # ================= XML =================
                 xml += f'<question type="multichoice">\n'
@@ -140,6 +156,7 @@ def parse_docx_to_moodle(docx_file):
 
                 xml += '</question>\n'
 
+                # ================= STATS =================
                 if is_multi:
                     stats["MULTIPLE CHOICE SET"] += 1
                 else:
