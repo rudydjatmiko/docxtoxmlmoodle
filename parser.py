@@ -16,7 +16,6 @@ def read_docx_content(docx_file):
         # cek gambar inline
         drawings = p._element.xpath('.//w:drawing')
 
-        # ambil gambar (jika ada)
         if drawings:
             for rel in doc.part.rels.values():
                 if "image" in rel.target_ref:
@@ -27,7 +26,6 @@ def read_docx_content(docx_file):
                         "data": encoded
                     })
 
-        # ambil teks
         if text:
             content.append({
                 "type": "text",
@@ -38,9 +36,9 @@ def read_docx_content(docx_file):
 
 
 # =========================
-# BUILD XML SOAL
+# BUILD QUESTION (MC / SET)
 # =========================
-def build_question(xml, stats, logs, q_text, options, ans, q_num):
+def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
     correct = [x.strip() for x in ans.split(",") if x.strip()]
     correct = list(dict.fromkeys(correct))
@@ -78,6 +76,28 @@ def build_question(xml, stats, logs, q_text, options, ans, q_num):
 
 
 # =========================
+# BUILD ESSAY
+# =========================
+def build_essay(xml, stats, logs, essay_text, ans, q_num):
+
+    xml += f'<question type="essay">\n'
+    xml += f'<name><text>Essay {q_num}</text></name>\n'
+    xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(essay_text)}]]></text></questiontext>\n'
+
+    # Optional: tampilkan kunci sebagai feedback
+    if ans and ans != "-":
+        xml += f'<generalfeedback format="html">\n'
+        xml += f'<text><![CDATA[<b>Referensi jawaban:</b><br>{wrap_arabic(ans)}]]></text>\n'
+        xml += f'</generalfeedback>\n'
+
+    xml += '</question>\n'
+
+    stats["ESSAY"] += 1
+    logs.append(f"✅ Essay {q_num}")
+    return xml, stats, logs
+
+
+# =========================
 # PARSER UTAMA
 # =========================
 def parse_docx_to_moodle(docx_file):
@@ -105,6 +125,7 @@ def parse_docx_to_moodle(docx_file):
     q_text = ""
     options = []
     ans = ""
+    essay_mode = False
 
     for item in content:
 
@@ -117,27 +138,29 @@ def parse_docx_to_moodle(docx_file):
             # ===== MODE =====
             if "MULTIPLECHOICE" in clean:
                 mode = "MC"
+                essay_mode = False
                 continue
 
             if "ESSAY" in clean or "URAIAN" in clean:
                 mode = "ESSAY"
+                essay_mode = True
+                q_text = ""
                 continue
 
             # ===== SOAL BARU =====
             match_q = re.match(r'^(\d+)[.\s)\-:]+(.*)', line)
 
-            if match_q:
-                # 🔥 SIMPAN SOAL SEBELUMNYA (FIX BUG 1 SOAL)
+            if match_q and not essay_mode:
+
                 if q_text:
                     if options and ans:
-                        xml, stats, logs = build_question(
+                        xml, stats, logs = build_mc(
                             xml, stats, logs, q_text, options, ans, q_num
                         )
                         q_num += 1
                     else:
-                        logs.append(f"❌ Soal {q_num} tidak lengkap (skip)")
+                        logs.append(f"❌ Soal {q_num} tidak lengkap")
 
-                # reset
                 q_text = match_q.group(2)
                 options = []
                 ans = ""
@@ -145,38 +168,54 @@ def parse_docx_to_moodle(docx_file):
 
             # ===== ANS =====
             if up.startswith("ANS"):
-                match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
-                if match_ans:
-                    ans = match_ans.group(1)
-                continue
+
+                if mode == "ESSAY":
+                    match_ans = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
+                    ans = match_ans.group(1).strip() if match_ans else ""
+
+                    xml, stats, logs = build_essay(
+                        xml, stats, logs, q_text, ans, q_num
+                    )
+                    q_num += 1
+                    q_text = ""
+                    continue
+
+                else:
+                    match_ans = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', up)
+                    ans = match_ans.group(1) if match_ans else ""
+                    continue
 
             # ===== OPSI =====
             match_opt = re.match(r'^([A-Da-d])[.\s)\-:]+(.*)', line)
-            if match_opt:
+
+            if match_opt and not essay_mode:
                 options.append(match_opt.group(2))
             else:
-                if options:
-                    options[-1] += "<br/>" + line
+                if essay_mode:
+                    q_text += line + "<br/>"
                 else:
-                    q_text += "<br/>" + line
+                    if options:
+                        options[-1] += "<br/>" + line
+                    else:
+                        q_text += "<br/>" + line
 
         # ================= IMAGE =================
         elif item["type"] == "image":
             img_html = f'<br><img src="data:image/png;base64,{item["data"]}" />'
 
-            if options:
-                options[-1] += img_html
-            else:
+            if essay_mode:
                 q_text += img_html
+            else:
+                if options:
+                    options[-1] += img_html
+                else:
+                    q_text += img_html
 
-    # 🔥 SIMPAN SOAL TERAKHIR
-    if q_text:
-        if options and ans:
-            xml, stats, logs = build_question(
-                xml, stats, logs, q_text, options, ans, q_num
-            )
-        else:
-            logs.append(f"❌ Soal terakhir tidak lengkap")
+    # simpan soal terakhir
+    if q_text and options and ans:
+        xml, stats, logs = build_mc(
+            xml, stats, logs, q_text, options, ans, q_num
+        )
 
     xml += '</quiz>'
 
