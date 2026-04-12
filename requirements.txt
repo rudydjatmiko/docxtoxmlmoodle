@@ -1,3 +1,4 @@
-python-docx
-doc2python
 streamlit
+python-docx
+lxml
+doc2python
