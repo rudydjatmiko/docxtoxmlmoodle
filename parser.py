@@ -15,7 +15,7 @@ def normalize(text):
 
 
 # =========================
-# PREPROCESS (FIX SPLIT)
+# PREPROCESS
 # =========================
 def preprocess_lines(lines):
     fixed = []
@@ -23,26 +23,13 @@ def preprocess_lines(lines):
 
     while i < len(lines):
         line = lines[i].strip()
-        norm = normalize(line)
 
-        # MULTIPLE + CHOICE
-        if norm == "MULTIPLE" and i + 1 < len(lines):
+        # MULTIPLE CHOICE split
+        if normalize(line) == "MULTIPLE" and i+1 < len(lines):
             if normalize(lines[i+1]) == "CHOICE":
                 fixed.append("MULTIPLECHOICE")
                 i += 2
                 continue
-
-        # opsi split
-        if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
-            fixed.append(line + " " + lines[i+1])
-            i += 2
-            continue
-
-        # nomor split
-        if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
-            fixed.append(line + " " + lines[i+1])
-            i += 2
-            continue
 
         fixed.append(line)
         i += 1
@@ -64,10 +51,10 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
     xml += f'<single>{"false" if is_multi else "true"}</single>\n'
 
     for i, opt in enumerate(options):
-        label = chr(65 + i)
+        label = chr(65+i)
 
         if is_multi:
-            frac = str(round(100/len(correct), 5)) if label in correct else "0"
+            frac = str(round(100/len(correct),5)) if label in correct else "0"
         else:
             frac = "100" if label in correct else "0"
 
@@ -136,34 +123,18 @@ def parse_docx_to_moodle(file):
     ans = ""
     q_num = 1
 
-    # LOOP
     while i < len(raw_lines):
 
         line = raw_lines[i]
 
-        # NOMOR SOAL
-        match_q = re.match(r'^\d+', line)
-        if match_q:
-            q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
-            options = []
-            ans = ""
-            i += 1
-            continue
+        # =========================
+        # 🔥 ANS (HARUS DI ATAS)
+        # =========================
+        if re.search(r'\bANS\b', line, re.IGNORECASE):
 
-        # OPSI
-        match_opt = re.match(r'^\(?([A-Da-d])[\.\)]?\s*(.*)', line)
-        if match_opt:
-            options.append(match_opt.group(2))
-            i += 1
-            continue
-
-        # ANS (FINALIZE)
-        if normalize(line).startswith("ANS"):
-
-            match = re.search(r'ANS[:\-]?\s*(.*)', line)
+            match = re.search(r'ANS\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
             ans = match.group(1) if match else ""
 
-            # 🔥 PENENTU TIPE SOAL
             if options:
                 xml, stats = build_mc(xml, stats, q_text, options, ans, q_num)
             else:
@@ -177,7 +148,28 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
+        # =========================
+        # NOMOR SOAL
+        # =========================
+        if re.match(r'^\d+', line):
+            q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
+            options = []
+            ans = ""
+            i += 1
+            continue
+
+        # =========================
+        # OPSI
+        # =========================
+        if re.match(r'^\(?[A-Da-d][\.\)]', line):
+            opt = re.sub(r'^\(?[A-Da-d][\.\)]\s*', '', line)
+            options.append(opt)
+            i += 1
+            continue
+
+        # =========================
         # LANJUTAN
+        # =========================
         if options:
             options[-1] += "<br/>" + line
         else:
