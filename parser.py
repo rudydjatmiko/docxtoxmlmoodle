@@ -18,8 +18,9 @@ def normalize(text):
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
-    correct = [x.strip() for x in ans.split(",") if x.strip()]
+    correct = [x.strip().upper() for x in ans.split(",") if x.strip()]
     correct = list(dict.fromkeys(correct))
+
     is_multi = len(correct) > 1
 
     xml += f'<question type="multichoice">\n'
@@ -59,7 +60,7 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
     xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
     xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
 
-    if ans:
+    if ans and ans.strip() != "---":
         xml += f'<generalfeedback format="html">\n'
         xml += f'<text><![CDATA[<b>Referensi jawaban:</b><br>{wrap_arabic(ans)}]]></text>\n'
         xml += f'</generalfeedback>\n'
@@ -77,11 +78,9 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
 def parse_docx_to_moodle(docx_file):
 
     try:
-        # ===== BACA DOCX =====
         doc = docx2python(docx_file)
         raw_text = doc.text
 
-        # cleaning tambahan
         raw_text = raw_text.replace('\xa0', ' ').replace('\t', ' ')
 
         raw_lines = [
@@ -117,21 +116,16 @@ def parse_docx_to_moodle(docx_file):
 
         norm = normalize(line)
 
-        # ================= DETEKSI NOMOR SOAL =================
+        # ================= NOMOR SOAL =================
         match_q = re.match(r'^(\d+)[.\s]+(.*)', line)
 
         if match_q:
 
-            # simpan soal sebelumnya
             if q_text:
                 if options:
-                    xml, stats, logs = build_mc(
-                        xml, stats, logs, q_text, options, ans, q_num
-                    )
+                    xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
                 else:
-                    xml, stats, logs = build_essay(
-                        xml, stats, logs, q_text, ans, q_num
-                    )
+                    xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
                 q_num += 1
 
             q_text = match_q.group(2)
@@ -139,40 +133,38 @@ def parse_docx_to_moodle(docx_file):
             ans = ""
             continue
 
-        # ================= DETEKSI ANS =================
+        # ================= OPSI =================
+        match_opt = re.match(r'^\(?([A-Da-d])[\.\)\s]+(.*)', line)
+
+        if match_opt:
+            options.append(match_opt.group(2))
+            continue
+
+        # ================= ANS =================
         if norm.startswith("ANS"):
 
-            match_mc = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
+            match_mc = re.search(r'ANS\s*[:\-]?\s*([A-Da-d,\s]+)', line)
             match_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
 
             if options:
-                ans = match_mc.group(1) if match_mc else ""
+                ans = match_mc.group(1).upper() if match_mc else ""
             else:
                 ans = match_es.group(1) if match_es else ""
 
             continue
 
-        # ================= DETEKSI OPSI =================
-        match_opt = re.match(r'^([A-Da-d])[.\s]+(.*)', line)
-
-        if match_opt:
-            options.append(match_opt.group(2))
+        # ================= TEKS LANJUTAN =================
+        if options:
+            options[-1] += "<br/>" + line
         else:
-            if options:
-                options[-1] += "<br/>" + line
-            else:
-                q_text += "<br/>" + line
+            q_text += "<br/>" + line
 
-    # ================= SIMPAN SOAL TERAKHIR =================
+    # ================= SOAL TERAKHIR =================
     if q_text:
         if options:
-            xml, stats, logs = build_mc(
-                xml, stats, logs, q_text, options, ans, q_num
-            )
+            xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
         else:
-            xml, stats, logs = build_essay(
-                xml, stats, logs, q_text, ans, q_num
-            )
+            xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
 
     xml += '</quiz>'
 
