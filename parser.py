@@ -4,6 +4,14 @@ from utils import wrap_arabic
 
 
 # =========================
+# CONSTANTS
+# =========================
+RE_QUESTION = re.compile(r'^\d+')
+RE_OPTION = re.compile(r'^\(?([A-Da-d])[\.\)]')
+RE_ANS = re.compile(r'\bANS\b', re.IGNORECASE)
+
+
+# =========================
 # NORMALIZE
 # =========================
 def normalize(text):
@@ -11,92 +19,78 @@ def normalize(text):
 
 
 # =========================
-# PREPROCESS (FIX SPLIT WORD)
+# PREPROCESS DOCX TEXT
 # =========================
 def preprocess_lines(lines):
-    fixed = []
+    result = []
     i = 0
 
     while i < len(lines):
         line = lines[i].strip()
 
-        # MULTIPLE + CHOICE (terpisah)
+        # MULTIPLE + CHOICE split
         if normalize(line) == "MULTIPLE" and i + 1 < len(lines):
-            if normalize(lines[i + 1]) == "CHOICE":
-                fixed.append("MULTIPLECHOICE")
+            if normalize(lines[i+1]) == "CHOICE":
+                result.append("MULTIPLECHOICE")
                 i += 2
                 continue
 
-        # opsi terpisah (a. + next line)
+        # option split
         if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
-            fixed.append(line + " " + lines[i + 1])
+            result.append(line + " " + lines[i+1])
             i += 2
             continue
 
-        # nomor terpisah (1. + next line)
+        # number split
         if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
-            fixed.append(line + " " + lines[i + 1])
+            result.append(line + " " + lines[i+1])
             i += 2
             continue
 
-        fixed.append(line)
+        result.append(line)
         i += 1
 
-    return fixed
+    return result
 
 
 # =========================
-# BUILD MC / MC SET
+# BUILD MULTICHOICE
 # =========================
 def build_mc(xml, stats, q_text, options, ans, q_num):
 
-    # 🔥 SUPER ROBUST ANSWER PARSER
     correct = re.findall(r'[A-D]', ans.upper())
     is_multi = len(correct) > 1
 
-    # 🔥 TYPE
-    if is_multi:
-        xml += '<question type="multichoiceset">\n'
-    else:
-        xml += '<question type="multichoice">\n'
+    qtype = "multichoiceset" if is_multi else "multichoice"
 
-    xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
+    xml.append(f'<question type="{qtype}">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
 
-    xml += '<questiontext format="html">\n'
-    xml += f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>\n'
-    xml += '</questiontext>\n'
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+    xml.append('</questiontext>')
 
-    # hanya untuk single choice
     if not is_multi:
-        xml += '<single>true</single>\n'
+        xml.append('<single>true</single>')
 
-    # standar Moodle
-    xml += '<shuffleanswers>true</shuffleanswers>\n'
-    xml += '<answernumbering>abc</answernumbering>\n'
+    xml.append('<shuffleanswers>true</shuffleanswers>')
+    xml.append('<answernumbering>abc</answernumbering>')
 
-    # 🔥 ALL OR NOTHING (100 / 0)
     for i, opt in enumerate(options):
         label = chr(65 + i)
+        frac = "100" if label in correct else "0"
 
-        if label in correct:
-            frac = "100"
-        else:
-            frac = "0"
+        xml.append(f'<answer fraction="{frac}" format="html">')
+        xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
+        xml.append('<feedback format="html"><text></text></feedback>')
+        xml.append('</answer>')
 
-        xml += f'<answer fraction="{frac}" format="html">\n'
-        xml += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
-        xml += '<feedback format="html"><text></text></feedback>\n'
-        xml += '</answer>\n'
+    xml.append('</question>')
 
-    xml += '</question>\n'
-
-    # statistik
     if is_multi:
         stats["MULTIPLE CHOICE SET"] += 1
     else:
         stats["MULTIPLE CHOICE"] += 1
-
-    return xml, stats
 
 
 # =========================
@@ -104,21 +98,20 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
 # =========================
 def build_essay(xml, stats, q_text, ans, q_num):
 
-    xml += '<question type="essay">\n'
-    xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
+    xml.append('<question type="essay">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
 
-    xml += '<questiontext format="html">\n'
-    xml += f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>\n'
-    xml += '</questiontext>\n'
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+    xml.append('</questiontext>')
 
-    xml += '<generalfeedback format="html">\n'
-    xml += f'<text><![CDATA[{ans}]]></text>\n'
-    xml += '</generalfeedback>\n'
+    xml.append('<generalfeedback format="html">')
+    xml.append(f'<text><![CDATA[{ans}]]></text>')
+    xml.append('</generalfeedback>')
 
-    xml += '</question>\n'
+    xml.append('</question>')
 
     stats["ESSAY"] += 1
-    return xml, stats
 
 
 # =========================
@@ -127,22 +120,22 @@ def build_essay(xml, stats, q_text, ans, q_num):
 def parse_docx_to_moodle(file):
 
     doc = docx2python(file)
-    raw_lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
-    raw_lines = preprocess_lines(raw_lines)
+    lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
+    lines = preprocess_lines(lines)
 
     # HEADER
     header = []
     i = 0
-    while i < len(raw_lines):
-        if normalize(raw_lines[i]) in ["MULTIPLECHOICE", "ESSAY"]:
+    while i < len(lines):
+        if normalize(lines[i]) in ["MULTIPLECHOICE", "ESSAY"]:
             break
-        header.append(raw_lines[i])
+        header.append(lines[i])
         i += 1
 
     title = " - ".join(header)
 
     # INIT
-    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
     stats = {
         "MULTIPLE CHOICE": 0,
@@ -150,39 +143,41 @@ def parse_docx_to_moodle(file):
         "ESSAY": 0
     }
 
+    mode = "MC"
     q_text = ""
     options = []
     ans = ""
     q_num = 1
-    mode = "MC"
 
     # LOOP
-    while i < len(raw_lines):
+    while i < len(lines):
 
-        line = raw_lines[i]
+        line = lines[i]
 
-        # MODE SWITCH
-        if normalize(line) == "MULTIPLECHOICE":
+        # MODE
+        norm = normalize(line)
+
+        if norm == "MULTIPLECHOICE":
             mode = "MC"
             i += 1
             continue
 
-        if normalize(line) == "ESSAY":
+        if norm == "ESSAY":
             mode = "ESSAY"
             q_text = ""
             i += 1
             continue
 
-        # ===== ANS (FINALIZE) =====
-        if re.search(r'\bANS\b', line, re.IGNORECASE):
+        # ANS
+        if RE_ANS.search(line):
 
             match = re.search(r'ANS\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
             ans = match.group(1) if match else ""
 
             if mode == "ESSAY":
-                xml, stats = build_essay(xml, stats, q_text, ans, q_num)
+                build_essay(xml, stats, q_text, ans, q_num)
             else:
-                xml, stats = build_mc(xml, stats, q_text, options, ans, q_num)
+                build_mc(xml, stats, q_text, options, ans, q_num)
 
             q_num += 1
             q_text = ""
@@ -192,28 +187,28 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ===== ESSAY MODE =====
+        # ESSAY MODE
         if mode == "ESSAY":
             q_text += "<br/>" + line
             i += 1
             continue
 
-        # ===== SOAL =====
-        if re.match(r'^\d+', line):
+        # QUESTION
+        if RE_QUESTION.match(line):
             q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
             options = []
             ans = ""
             i += 1
             continue
 
-        # ===== OPSI =====
-        if re.match(r'^\(?[A-Da-d][\.\)]', line):
+        # OPTION
+        if RE_OPTION.match(line):
             opt = re.sub(r'^\(?[A-Da-d][\.\)]\s*', '', line)
             options.append(opt)
             i += 1
             continue
 
-        # ===== LANJUTAN =====
+        # CONTINUE
         if options:
             options[-1] += "<br/>" + line
         else:
@@ -221,6 +216,6 @@ def parse_docx_to_moodle(file):
 
         i += 1
 
-    xml += '</quiz>'
+    xml.append('</quiz>')
 
-    return xml, stats, [], title
+    return "\n".join(xml), stats, [], title
