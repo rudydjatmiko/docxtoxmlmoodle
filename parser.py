@@ -2,9 +2,16 @@ import re
 from docx2python import docx2python
 from utils import wrap_arabic
 
+# 🔥 IMPORT IMAGE HANDLER
+from image_handler import (
+    extract_images,
+    replace_image_placeholder,
+    append_images_to_xml
+)
+
 
 # =========================
-# CONSTANTS
+# CONSTANT REGEX
 # =========================
 RE_QUESTION = re.compile(r'^\d+')
 RE_OPTION = re.compile(r'^\(?([A-Da-d])[\.\)]')
@@ -19,7 +26,7 @@ def normalize(text):
 
 
 # =========================
-# PREPROCESS DOCX TEXT
+# PREPROCESS TEXT
 # =========================
 def preprocess_lines(lines):
     result = []
@@ -30,20 +37,20 @@ def preprocess_lines(lines):
 
         # MULTIPLE + CHOICE split
         if normalize(line) == "MULTIPLE" and i + 1 < len(lines):
-            if normalize(lines[i+1]) == "CHOICE":
+            if normalize(lines[i + 1]) == "CHOICE":
                 result.append("MULTIPLECHOICE")
                 i += 2
                 continue
 
-        # option split
+        # opsi terpisah
         if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
-            result.append(line + " " + lines[i+1])
+            result.append(line + " " + lines[i + 1])
             i += 2
             continue
 
-        # number split
+        # nomor terpisah
         if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
-            result.append(line + " " + lines[i+1])
+            result.append(line + " " + lines[i + 1])
             i += 2
             continue
 
@@ -56,8 +63,12 @@ def preprocess_lines(lines):
 # =========================
 # BUILD MULTICHOICE
 # =========================
-def build_mc(xml, stats, q_text, options, ans, q_num):
+def build_mc(xml, stats, q_text, options, ans, q_num, images):
 
+    # 🔥 replace gambar placeholder
+    q_text = replace_image_placeholder(q_text, images)
+
+    # 🔥 parse jawaban
     correct = re.findall(r'[A-D]', ans.upper())
     is_multi = len(correct) > 1
 
@@ -76,6 +87,7 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
     xml.append('<shuffleanswers>true</shuffleanswers>')
     xml.append('<answernumbering>abc</answernumbering>')
 
+    # 🔥 ALL OR NOTHING
     for i, opt in enumerate(options):
         label = chr(65 + i)
         frac = "100" if label in correct else "0"
@@ -85,8 +97,12 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
         xml.append('<feedback format="html"><text></text></feedback>')
         xml.append('</answer>')
 
+    # 🔥 tambahkan gambar ke XML
+    append_images_to_xml(xml, images)
+
     xml.append('</question>')
 
+    # stats
     if is_multi:
         stats["MULTIPLE CHOICE SET"] += 1
     else:
@@ -96,7 +112,9 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
 # =========================
 # BUILD ESSAY
 # =========================
-def build_essay(xml, stats, q_text, ans, q_num):
+def build_essay(xml, stats, q_text, ans, q_num, images):
+
+    q_text = replace_image_placeholder(q_text, images)
 
     xml.append('<question type="essay">')
     xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
@@ -109,6 +127,9 @@ def build_essay(xml, stats, q_text, ans, q_num):
     xml.append(f'<text><![CDATA[{ans}]]></text>')
     xml.append('</generalfeedback>')
 
+    # 🔥 tambahkan gambar
+    append_images_to_xml(xml, images)
+
     xml.append('</question>')
 
     stats["ESSAY"] += 1
@@ -119,11 +140,15 @@ def build_essay(xml, stats, q_text, ans, q_num):
 # =========================
 def parse_docx_to_moodle(file):
 
+    # ===== TEXT =====
     doc = docx2python(file)
     lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
     lines = preprocess_lines(lines)
 
-    # HEADER
+    # ===== IMAGES =====
+    images = extract_images(file)
+
+    # ===== HEADER =====
     header = []
     i = 0
     while i < len(lines):
@@ -134,7 +159,7 @@ def parse_docx_to_moodle(file):
 
     title = " - ".join(header)
 
-    # INIT
+    # ===== INIT =====
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
     stats = {
@@ -149,14 +174,13 @@ def parse_docx_to_moodle(file):
     ans = ""
     q_num = 1
 
-    # LOOP
+    # ===== LOOP =====
     while i < len(lines):
 
         line = lines[i]
-
-        # MODE
         norm = normalize(line)
 
+        # MODE SWITCH
         if norm == "MULTIPLECHOICE":
             mode = "MC"
             i += 1
@@ -168,16 +192,16 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ANS
+        # ===== ANS =====
         if RE_ANS.search(line):
 
             match = re.search(r'ANS\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
             ans = match.group(1) if match else ""
 
             if mode == "ESSAY":
-                build_essay(xml, stats, q_text, ans, q_num)
+                build_essay(xml, stats, q_text, ans, q_num, images)
             else:
-                build_mc(xml, stats, q_text, options, ans, q_num)
+                build_mc(xml, stats, q_text, options, ans, q_num, images)
 
             q_num += 1
             q_text = ""
@@ -187,13 +211,13 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ESSAY MODE
+        # ===== ESSAY MODE =====
         if mode == "ESSAY":
             q_text += "<br/>" + line
             i += 1
             continue
 
-        # QUESTION
+        # ===== QUESTION =====
         if RE_QUESTION.match(line):
             q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
             options = []
@@ -201,14 +225,14 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # OPTION
+        # ===== OPTION =====
         if RE_OPTION.match(line):
             opt = re.sub(r'^\(?[A-Da-d][\.\)]\s*', '', line)
             options.append(opt)
             i += 1
             continue
 
-        # CONTINUE
+        # ===== CONTINUE =====
         if options:
             options[-1] += "<br/>" + line
         else:
