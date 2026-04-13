@@ -1,7 +1,5 @@
 import re
-import base64
 from docx2python import docx2python
-from docx import Document
 from utils import wrap_arabic
 
 
@@ -16,23 +14,7 @@ def normalize(text):
 
 
 # =========================
-# AMBIL GAMBAR DARI DOCX
-# =========================
-def extract_images(docx_file):
-    doc = Document(docx_file)
-    images = []
-
-    for rel in doc.part.rels.values():
-        if "image" in rel.target_ref:
-            img_data = rel.target_part.blob
-            encoded = base64.b64encode(img_data).decode()
-            images.append(encoded)
-
-    return images
-
-
-# =========================
-# BUILD MC
+# BUILD MULTIPLE CHOICE
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
@@ -77,7 +59,7 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
     xml += f'<name><text>Soal {q_num:02d}</text></name>\n'
     xml += f'<questiontext format="html"><text><![CDATA[{wrap_arabic(q_text)}]]></text></questiontext>\n'
 
-    if ans and ans != "-":
+    if ans:
         xml += f'<generalfeedback format="html">\n'
         xml += f'<text><![CDATA[<b>Referensi jawaban:</b><br>{wrap_arabic(ans)}]]></text>\n'
         xml += f'</generalfeedback>\n'
@@ -90,16 +72,23 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
 
 
 # =========================
-# PARSER UTAMA (HYBRID)
+# PARSER UTAMA
 # =========================
 def parse_docx_to_moodle(docx_file):
 
     try:
-        # ===== TEXT VIA DOC2PYTHON =====
-        with doc2python(docx_file) as doc:
-            raw_text = doc.text
+        # ===== BACA DOCX =====
+        doc = docx2python(docx_file)
+        raw_text = doc.text
 
-        raw_lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+        # cleaning tambahan
+        raw_text = raw_text.replace('\xa0', ' ').replace('\t', ' ')
+
+        raw_lines = [
+            line.strip()
+            for line in raw_text.split('\n')
+            if line.strip()
+        ]
 
     except Exception as e:
         return None, {}, [], f"Error membaca file: {str(e)}"
@@ -128,7 +117,7 @@ def parse_docx_to_moodle(docx_file):
 
         norm = normalize(line)
 
-        # ================= SOAL BARU =================
+        # ================= DETEKSI NOMOR SOAL =================
         match_q = re.match(r'^(\d+)[.\s]+(.*)', line)
 
         if match_q:
@@ -150,20 +139,20 @@ def parse_docx_to_moodle(docx_file):
             ans = ""
             continue
 
-        # ================= ANS =================
+        # ================= DETEKSI ANS =================
         if norm.startswith("ANS"):
 
-            match_ans_mc = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
-            match_ans_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
+            match_mc = re.search(r'ANS\s*[:\-]?\s*([A-Z,\s]+)', norm)
+            match_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
 
             if options:
-                ans = match_ans_mc.group(1) if match_ans_mc else ""
+                ans = match_mc.group(1) if match_mc else ""
             else:
-                ans = match_ans_es.group(1) if match_ans_es else ""
+                ans = match_es.group(1) if match_es else ""
 
             continue
 
-        # ================= OPSI =================
+        # ================= DETEKSI OPSI =================
         match_opt = re.match(r'^([A-Da-d])[.\s]+(.*)', line)
 
         if match_opt:
@@ -174,7 +163,7 @@ def parse_docx_to_moodle(docx_file):
             else:
                 q_text += "<br/>" + line
 
-    # ================= SOAL TERAKHIR =================
+    # ================= SIMPAN SOAL TERAKHIR =================
     if q_text:
         if options:
             xml, stats, logs = build_mc(
