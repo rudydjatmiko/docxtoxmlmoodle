@@ -31,4 +31,14 @@ if file:
         col2.metric("PG Kompleks", stats["MULTIPLE CHOICE SET"])
         col3.metric("Essay", stats["ESSAY"])
 
-        st.download_button("Download XML", xml, file_name="quiz.xml")
+        # =========================
+        # 🔥 FIX NAMA FILE
+        # =========================
+        filename = file.name.replace(".docx", ".xml")
+
+        st.download_button(
+            "Download XML",
+            xml,
+            file_name=filename,
+            mime="text/xml"
+        )
