@@ -4,7 +4,7 @@ from utils import wrap_arabic
 
 
 # =========================
-# NORMALIZE TEXT
+# NORMALIZE
 # =========================
 def normalize(text):
     text = text.replace('\xa0', ' ')
@@ -14,7 +14,20 @@ def normalize(text):
 
 
 # =========================
-# BUILD MULTIPLE CHOICE
+# DETECT MODE
+# =========================
+def detect_mode(line):
+    norm = normalize(line).replace(" ", "")
+
+    if norm == "MULTIPLECHOICE":
+        return "MC"
+    elif norm == "ESSAY":
+        return "ESSAY"
+    return None
+
+
+# =========================
+# BUILD MC
 # =========================
 def build_mc(xml, stats, logs, q_text, options, ans, q_num):
 
@@ -47,7 +60,7 @@ def build_mc(xml, stats, logs, q_text, options, ans, q_num):
     else:
         stats["MULTIPLE CHOICE"] += 1
 
-    logs.append(f"✅ Soal {q_num:02d} | ANS: {correct}")
+    logs.append(f"✅ Soal {q_num:02d} (MC)")
     return xml, stats, logs
 
 
@@ -62,13 +75,13 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
 
     if ans and ans.strip() != "---":
         xml += f'<generalfeedback format="html">\n'
-        xml += f'<text><![CDATA[<b>Referensi jawaban:</b><br>{wrap_arabic(ans)}]]></text>\n'
+        xml += f'<text><![CDATA[{wrap_arabic(ans)}]]></text>\n'
         xml += f'</generalfeedback>\n'
 
     xml += '</question>\n'
 
     stats["ESSAY"] += 1
-    logs.append(f"✅ Essay {q_num:02d}")
+    logs.append(f"✅ Soal {q_num:02d} (Essay)")
     return xml, stats, logs
 
 
@@ -95,8 +108,23 @@ def parse_docx_to_moodle(docx_file):
     if len(raw_lines) < 3:
         return None, {}, [], "Dokumen tidak valid."
 
-    judul_paket = f"{raw_lines[0]} - {raw_lines[1]}"
+    # =========================
+    # HEADER DETECTION
+    # =========================
+    header_lines = []
+    i = 0
 
+    while i < len(raw_lines):
+        if detect_mode(raw_lines[i]):
+            break
+        header_lines.append(raw_lines[i])
+        i += 1
+
+    judul_paket = " - ".join(header_lines)
+
+    # =========================
+    # INIT
+    # =========================
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
@@ -107,64 +135,73 @@ def parse_docx_to_moodle(docx_file):
 
     logs = []
 
-    q_num = 1
+    mode = None
     q_text = ""
     options = []
     ans = ""
+    q_num = 1
 
-    for line in raw_lines:
+    # =========================
+    # MAIN LOOP
+    # =========================
+    while i < len(raw_lines):
 
+        line = raw_lines[i]
         norm = normalize(line)
 
-        # ================= NOMOR SOAL =================
+        # ===== DETECT MODE =====
+        new_mode = detect_mode(line)
+        if new_mode:
+            mode = new_mode
+            i += 1
+            continue
+
+        # ===== DETECT QUESTION NUMBER =====
         match_q = re.match(r'^(\d+)[.\s]+(.*)', line)
 
         if match_q:
-
-            if q_text:
-                if options:
-                    xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
-                else:
-                    xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
-                q_num += 1
-
             q_text = match_q.group(2)
             options = []
             ans = ""
+            i += 1
             continue
 
-        # ================= OPSI =================
+        # ===== DETECT OPTION =====
         match_opt = re.match(r'^\(?([A-Da-d])[\.\)\s]+(.*)', line)
 
         if match_opt:
             options.append(match_opt.group(2))
+            i += 1
             continue
 
-        # ================= ANS =================
+        # ===== DETECT ANS (FINALIZER) =====
         if norm.startswith("ANS"):
 
             match_mc = re.search(r'ANS\s*[:\-]?\s*([A-Da-d,\s]+)', line)
             match_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
 
-            if options:
+            if mode == "MC":
                 ans = match_mc.group(1).upper() if match_mc else ""
+                xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
             else:
                 ans = match_es.group(1) if match_es else ""
+                xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
 
+            q_num += 1
+            q_text = ""
+            options = []
+            ans = ""
+
+            i += 1
             continue
 
-        # ================= TEKS LANJUTAN =================
+        # ===== TEXT LANJUTAN =====
         if options:
             options[-1] += "<br/>" + line
         else:
             q_text += "<br/>" + line
 
-    # ================= SOAL TERAKHIR =================
-    if q_text:
-        if options:
-            xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
-        else:
-            xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
+        i += 1
 
     xml += '</quiz>'
 
