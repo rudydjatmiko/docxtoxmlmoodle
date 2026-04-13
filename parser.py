@@ -32,13 +32,13 @@ def preprocess_lines(lines):
                 i += 2
                 continue
 
-        # opsi split (a. + next line)
+        # opsi split
         if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
             fixed.append(line + " " + lines[i+1])
             i += 2
             continue
 
-        # nomor split (1. + next line)
+        # nomor split
         if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
             fixed.append(line + " " + lines[i+1])
             i += 2
@@ -48,19 +48,6 @@ def preprocess_lines(lines):
         i += 1
 
     return fixed
-
-
-# =========================
-# DETECT MODE
-# =========================
-def detect_mode(line):
-    norm = normalize(line)
-
-    if norm == "MULTIPLECHOICE":
-        return "MC"
-    elif norm == "ESSAY":
-        return "ESSAY"
-    return None
 
 
 # =========================
@@ -78,10 +65,11 @@ def build_mc(xml, stats, q_text, options, ans, q_num):
 
     for i, opt in enumerate(options):
         label = chr(65 + i)
-        frac = "100" if label in correct else "0"
 
-        if is_multi and label in correct:
-            frac = str(round(100/len(correct), 5))
+        if is_multi:
+            frac = str(round(100/len(correct), 5)) if label in correct else "0"
+        else:
+            frac = "100" if label in correct else "0"
 
         xml += f'<answer fraction="{frac}">\n'
         xml += f'<text><![CDATA[{wrap_arabic(opt)}]]></text>\n'
@@ -128,7 +116,7 @@ def parse_docx_to_moodle(file):
     header = []
     i = 0
     while i < len(raw_lines):
-        if detect_mode(raw_lines[i]):
+        if normalize(raw_lines[i]) in ["MULTIPLECHOICE", "ESSAY"]:
             break
         header.append(raw_lines[i])
         i += 1
@@ -137,29 +125,26 @@ def parse_docx_to_moodle(file):
 
     # INIT
     xml = '<?xml version="1.0"?><quiz>\n'
-    stats = {"MULTIPLE CHOICE":0,"MULTIPLE CHOICE SET":0,"ESSAY":0}
+    stats = {
+        "MULTIPLE CHOICE": 0,
+        "MULTIPLE CHOICE SET": 0,
+        "ESSAY": 0
+    }
 
-    mode = None
     q_text = ""
     options = []
     ans = ""
     q_num = 1
 
+    # LOOP
     while i < len(raw_lines):
 
         line = raw_lines[i]
 
-        # MODE
-        m = detect_mode(line)
-        if m:
-            mode = m
-            i += 1
-            continue
-
-        # SOAL
+        # NOMOR SOAL
         match_q = re.match(r'^\d+', line)
         if match_q:
-            q_text = re.sub(r'^\d+[\.\)]?\s*','',line)
+            q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
             options = []
             ans = ""
             i += 1
@@ -172,26 +157,27 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ANS
+        # ANS (FINALIZE)
         if normalize(line).startswith("ANS"):
 
-            if mode == "MC":
-                match = re.search(r'ANS[:\-]?\s*(.*)', line)
-                ans = match.group(1) if match else ""
+            match = re.search(r'ANS[:\-]?\s*(.*)', line)
+            ans = match.group(1) if match else ""
+
+            # 🔥 PENENTU TIPE SOAL
+            if options:
                 xml, stats = build_mc(xml, stats, q_text, options, ans, q_num)
             else:
-                match = re.search(r'ANS[:\-]?\s*(.*)', line)
-                ans = match.group(1) if match else ""
                 xml, stats = build_essay(xml, stats, q_text, ans, q_num)
 
             q_num += 1
             q_text = ""
             options = []
             ans = ""
+
             i += 1
             continue
 
-        # lanjutan
+        # LANJUTAN
         if options:
             options[-1] += "<br/>" + line
         else:
