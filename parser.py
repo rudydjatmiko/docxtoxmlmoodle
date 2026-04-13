@@ -4,20 +4,53 @@ from utils import wrap_arabic
 
 
 # =========================
-# NORMALIZE
+# NORMALIZE (NO SPACE)
 # =========================
 def normalize(text):
     text = text.replace('\xa0', ' ')
     text = text.replace('\u200b', '')
     text = text.replace('\t', ' ')
-    return re.sub(r'\s+', ' ', text).strip().upper()
+    text = re.sub(r'\s+', '', text)  # 🔥 hilangkan semua spasi
+    return text.upper()
+
+
+# =========================
+# PREPROCESS (FIX WORD SPLIT)
+# =========================
+def preprocess_lines(raw_lines):
+    fixed = []
+    i = 0
+
+    while i < len(raw_lines):
+        line = raw_lines[i].strip()
+        norm = normalize(line)
+
+        # ===== FIX MULTIPLE + CHOICE =====
+        if norm == "MULTIPLE" and i + 1 < len(raw_lines):
+            next_norm = normalize(raw_lines[i + 1])
+            if next_norm == "CHOICE":
+                fixed.append("MULTIPLECHOICE")
+                i += 2
+                continue
+
+        # ===== FIX OPSI SPLIT =====
+        if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(raw_lines):
+            merged = line + " " + raw_lines[i + 1]
+            fixed.append(merged)
+            i += 2
+            continue
+
+        fixed.append(line)
+        i += 1
+
+    return fixed
 
 
 # =========================
 # DETECT MODE
 # =========================
 def detect_mode(line):
-    norm = normalize(line).replace(" ", "")
+    norm = normalize(line)
 
     if norm == "MULTIPLECHOICE":
         return "MC"
@@ -86,7 +119,7 @@ def build_essay(xml, stats, logs, q_text, ans, q_num):
 
 
 # =========================
-# PARSER UTAMA
+# MAIN PARSER
 # =========================
 def parse_docx_to_moodle(docx_file):
 
@@ -94,13 +127,14 @@ def parse_docx_to_moodle(docx_file):
         doc = docx2python(docx_file)
         raw_text = doc.text
 
-        raw_text = raw_text.replace('\xa0', ' ').replace('\t', ' ')
-
         raw_lines = [
             line.strip()
             for line in raw_text.split('\n')
             if line.strip()
         ]
+
+        # 🔥 FIX STRUCTURE WORD
+        raw_lines = preprocess_lines(raw_lines)
 
     except Exception as e:
         return None, {}, [], f"Error membaca file: {str(e)}"
@@ -108,9 +142,7 @@ def parse_docx_to_moodle(docx_file):
     if len(raw_lines) < 3:
         return None, {}, [], "Dokumen tidak valid."
 
-    # =========================
-    # HEADER DETECTION
-    # =========================
+    # ================= HEADER =================
     header_lines = []
     i = 0
 
@@ -122,9 +154,7 @@ def parse_docx_to_moodle(docx_file):
 
     judul_paket = " - ".join(header_lines)
 
-    # =========================
-    # INIT
-    # =========================
+    # ================= INIT =================
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n'
 
     stats = {
@@ -141,24 +171,20 @@ def parse_docx_to_moodle(docx_file):
     ans = ""
     q_num = 1
 
-    # =========================
-    # MAIN LOOP
-    # =========================
+    # ================= LOOP =================
     while i < len(raw_lines):
 
         line = raw_lines[i]
-        norm = normalize(line)
 
-        # ===== DETECT MODE =====
+        # ===== MODE =====
         new_mode = detect_mode(line)
         if new_mode:
             mode = new_mode
             i += 1
             continue
 
-        # ===== DETECT QUESTION NUMBER =====
+        # ===== NOMOR SOAL =====
         match_q = re.match(r'^(\d+)[.\s]+(.*)', line)
-
         if match_q:
             q_text = match_q.group(2)
             options = []
@@ -166,25 +192,23 @@ def parse_docx_to_moodle(docx_file):
             i += 1
             continue
 
-        # ===== DETECT OPTION =====
+        # ===== OPSI =====
         match_opt = re.match(r'^\(?([A-Da-d])[\.\)\s]+(.*)', line)
-
         if match_opt:
             options.append(match_opt.group(2))
             i += 1
             continue
 
-        # ===== DETECT ANS (FINALIZER) =====
-        if norm.startswith("ANS"):
-
-            match_mc = re.search(r'ANS\s*[:\-]?\s*([A-Da-d,\s]+)', line)
-            match_es = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
+        # ===== ANS (FINALIZE) =====
+        if normalize(line).startswith("ANS"):
 
             if mode == "MC":
-                ans = match_mc.group(1).upper() if match_mc else ""
+                match = re.search(r'ANS\s*[:\-]?\s*([A-Da-d,\s]+)', line)
+                ans = match.group(1).upper() if match else ""
                 xml, stats, logs = build_mc(xml, stats, logs, q_text, options, ans, q_num)
             else:
-                ans = match_es.group(1) if match_es else ""
+                match = re.search(r'ANS\s*[:\-]?\s*(.*)', line)
+                ans = match.group(1) if match else ""
                 xml, stats, logs = build_essay(xml, stats, logs, q_text, ans, q_num)
 
             q_num += 1
@@ -195,7 +219,7 @@ def parse_docx_to_moodle(docx_file):
             i += 1
             continue
 
-        # ===== TEXT LANJUTAN =====
+        # ===== LANJUTAN =====
         if options:
             options[-1] += "<br/>" + line
         else:
