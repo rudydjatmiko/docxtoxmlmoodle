@@ -6,14 +6,17 @@ def extract_images(docx_file):
     """
     Extract semua gambar dari docx → dict {filename: base64}
     """
+
+    docx_file.seek(0)  # 🔥 WAJIB
+
     doc = Document(docx_file)
     images = {}
     index = 1
 
-    for rel in doc.part._rels:
-        rel = doc.part._rels[rel]
+    for rel in doc.part._rels.values():
 
-        if "image" in rel.target_ref:
+        if hasattr(rel, "target_part") and "image" in rel.target_ref:
+
             image_bytes = rel.target_part.blob
             filename = f"image{index}.png"
 
