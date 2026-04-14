@@ -1,12 +1,7 @@
 import re
 from docx2python import docx2python
 from utils import wrap_arabic
-
-from image_handler import (
-    extract_images,
-    replace_image_placeholder,
-    append_images_to_xml
-)
+from image_handler import extract_images, replace_image_placeholder, append_images_to_xml
 
 RE_QUESTION = re.compile(r'^\d+')
 RE_OPTION = re.compile(r'^\(?([A-Da-d])[\.\)]')
@@ -17,101 +12,7 @@ def normalize(text):
     return re.sub(r'\s+', '', text).upper()
 
 
-def preprocess_lines(lines):
-    result = []
-    i = 0
-
-    while i < len(lines):
-        line = lines[i].strip()
-
-        if normalize(line) == "MULTIPLE" and i+1 < len(lines):
-            if normalize(lines[i+1]) == "CHOICE":
-                result.append("MULTIPLECHOICE")
-                i += 2
-                continue
-
-        result.append(line)
-        i += 1
-
-    return result
-
-
-def build_mc(xml, stats, q_text, options, ans, q_num,
-             image_map, image_data):
-
-    used_images = {}
-
-    q_text = replace_image_placeholder(
-        q_text, image_map, image_data, used_images
-    )
-
-    correct = re.findall(r'[A-D]', ans.upper())
-    is_multi = len(correct) > 1
-
-    qtype = "multichoiceset" if is_multi else "multichoice"
-
-    xml.append(f'<question type="{qtype}">')
-    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
-
-    xml.append('<questiontext format="html">')
-    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
-
-    # 🔥 hanya gambar yg dipakai
-    append_images_to_xml(xml, used_images)
-
-    xml.append('</questiontext>')
-
-    if not is_multi:
-        xml.append('<single>true</single>')
-
-    xml.append('<shuffleanswers>true</shuffleanswers>')
-    xml.append('<answernumbering>abc</answernumbering>')
-
-    for i, opt in enumerate(options):
-        label = chr(65+i)
-        frac = "100" if label in correct else "0"
-
-        xml.append(f'<answer fraction="{frac}" format="html">')
-        xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
-        xml.append('</answer>')
-
-    xml.append('</question>')
-
-    if is_multi:
-        stats["MULTIPLE CHOICE SET"] += 1
-    else:
-        stats["MULTIPLE CHOICE"] += 1
-
-
-def build_essay(xml, stats, q_text, ans, q_num,
-                image_map, image_data):
-
-    used_images = {}
-
-    q_text = replace_image_placeholder(
-        q_text, image_map, image_data, used_images
-    )
-
-    xml.append('<question type="essay">')
-    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
-
-    xml.append('<questiontext format="html">')
-    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
-
-    append_images_to_xml(xml, used_images)
-
-    xml.append('</questiontext>')
-
-    xml.append('<generalfeedback format="html">')
-    xml.append(f'<text><![CDATA[{ans}]]></text>')
-    xml.append('</generalfeedback>')
-
-    xml.append('</question>')
-
-    stats["ESSAY"] += 1
-
-
-def parse_docx_to_moodle(file):
+def parse_docx_to_moodle(file, moodle_version="4.x"):
 
     logs = []
 
@@ -119,13 +20,9 @@ def parse_docx_to_moodle(file):
     doc = docx2python(file)
 
     lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
-    lines = preprocess_lines(lines)
 
     file.seek(0)
     image_map, image_data = extract_images(file)
-    file.seek(0)
-
-    logs.append(f"Total image unique: {len(image_data)}")
 
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
@@ -165,11 +62,10 @@ def parse_docx_to_moodle(file):
             ans = match.group(1) if match else ""
 
             if mode == "ESSAY":
-                build_essay(xml, stats, q_text, ans, q_num,
-                            image_map, image_data)
+                build_essay(xml, stats, q_text, ans, q_num, image_map, image_data)
             else:
                 build_mc(xml, stats, q_text, options, ans, q_num,
-                         image_map, image_data)
+                         image_map, image_data, moodle_version)
 
             q_num += 1
             q_text = ""
@@ -207,3 +103,95 @@ def parse_docx_to_moodle(file):
     xml.append('</quiz>')
 
     return "\n".join(xml), stats, logs, "Converted"
+
+
+# =========================
+# BUILD MC
+# =========================
+def build_mc(xml, stats, q_text, options, ans, q_num,
+             image_map, image_data, moodle_version):
+
+    used_images = {}
+
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
+
+    correct = re.findall(r'[A-D]', ans.upper())
+    is_multi = len(correct) > 1
+
+    # 🔥 MULTI VERSION LOGIC
+    if moodle_version.startswith("3"):
+        qtype = "multichoiceset" if is_multi else "multichoice"
+    else:
+        qtype = "multichoice"
+
+    xml.append(f'<question type="{qtype}">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
+
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+
+    append_images_to_xml(xml, used_images)
+
+    xml.append('</questiontext>')
+
+    # 🔥 SINGLE / MULTI
+    if is_multi:
+        xml.append('<single>false</single>')
+    else:
+        xml.append('<single>true</single>')
+
+    xml.append('<shuffleanswers>true</shuffleanswers>')
+    xml.append('<answernumbering>abc</answernumbering>')
+
+    # 🔥 FRACTION FIX
+    for i, opt in enumerate(options):
+        label = chr(65 + i)
+
+        if is_multi:
+            frac = str(100 / len(correct)) if label in correct else "0"
+        else:
+            frac = "100" if label in correct else "0"
+
+        xml.append(f'<answer fraction="{frac}" format="html">')
+        xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
+        xml.append('</answer>')
+
+    xml.append('</question>')
+
+    if is_multi:
+        stats["MULTIPLE CHOICE SET"] += 1
+    else:
+        stats["MULTIPLE CHOICE"] += 1
+
+
+# =========================
+# BUILD ESSAY
+# =========================
+def build_essay(xml, stats, q_text, ans, q_num,
+                image_map, image_data):
+
+    used_images = {}
+
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
+
+    xml.append('<question type="essay">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
+
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+
+    append_images_to_xml(xml, used_images)
+
+    xml.append('</questiontext>')
+
+    xml.append('<generalfeedback format="html">')
+    xml.append(f'<text><![CDATA[{ans}]]></text>')
+    xml.append('</generalfeedback>')
+
+    xml.append('</question>')
+
+    stats["ESSAY"] += 1
