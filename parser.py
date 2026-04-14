@@ -6,15 +6,15 @@ import xml.etree.ElementTree as ET
 
 
 # =========================
-# DETEKSI SOAL
+# DETEKSI SOAL (HANYA 1. 2. 3.)
 # =========================
 def is_question(text):
     text = text.strip()
-    return re.match(r'^\d+[\.\)]\s*', text) is not None
+    return re.match(r'^\d+\.\s+', text) is not None
 
 
 # =========================
-# DETEKSI OPSI
+# DETEKSI OPSI (A. B. C. D.)
 # =========================
 def is_option(text):
     text = text.strip()
@@ -73,7 +73,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     questions = []
 
-    current_question = None
+    current_question = False
     current_text = ""
     current_answers = []
     current_images = []
@@ -92,12 +92,11 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
         text = para.text.strip()
 
-        # skip kosong
         if not text:
             continue
 
         # =========================
-        # 🔥 OPSI (PRIORITAS UTAMA)
+        # OPSI (HARUS PALING ATAS)
         # =========================
         if is_option(text):
             if current_question:
@@ -105,14 +104,14 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             continue
 
         # =========================
-        # 🔥 KUNCI JAWABAN
+        # KUNCI JAWABAN
         # =========================
         if "ANS:" in text.upper():
             correct_answers = extract_answer_key(text)
             continue
 
         # =========================
-        # 🔥 SOAL BARU
+        # SOAL BARU (FIX UTAMA)
         # =========================
         if is_question(text):
 
@@ -133,7 +132,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             continue
 
         # =========================
-        # TEKS LANJUTAN
+        # TEKS LANJUTAN (TERMASUK 1) 2) dll)
         # =========================
         if current_question:
             current_text += "<br/>" + text
@@ -185,13 +184,13 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
         html = q["text"]
 
-        # masukkan gambar
+        # GAMBAR
         for img in q["images"]:
             html += f'<br/><img src="@@PLUGINFILE@@/{img["name"]}"/>'
 
         text_el.text = f"<![CDATA[{html}]]>"
 
-        # file gambar
+        # FILE GAMBAR
         for img in q["images"]:
             file_el = ET.SubElement(qtext, "file", name=img["name"], encoding="base64")
             file_el.text = img["data"]
@@ -211,10 +210,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
                 label = ans[0].upper()
 
-                if label in q["correct"]:
-                    fraction = "100"
-                else:
-                    fraction = "0"
+                fraction = "100" if label in q["correct"] else "0"
 
                 a = ET.SubElement(question, "answer", fraction=fraction, format="html")
                 ET.SubElement(a, "text").text = f"<![CDATA[{ans}]]>"
