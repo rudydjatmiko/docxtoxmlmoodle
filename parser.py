@@ -5,10 +5,6 @@ from docx import Document
 import xml.etree.ElementTree as ET
 
 
-def is_option(text):
-    return re.match(r'^[A-D][\.\)]\s*', text.strip()) is not None
-
-
 def extract_answer_key(text):
     if "ANS:" in text.upper():
         ans = text.upper().split("ANS:")[1].strip()
@@ -48,8 +44,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     questions = []
 
-    buffer_text = []
-    buffer_answers = []
+    buffer_lines = []
     buffer_images = []
     correct_answers = []
 
@@ -62,13 +57,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
     for para in doc.paragraphs:
 
         text = para.text.strip()
-
         if not text:
-            continue
-
-        # OPTION
-        if is_option(text):
-            buffer_answers.append(text)
             continue
 
         # IMAGE
@@ -77,27 +66,34 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             if img:
                 buffer_images.append(img)
 
-        # ANSWER KEY (END OF QUESTION)
+        # END OF QUESTION
         if "ANS:" in text.upper():
+
             correct_answers = extract_answer_key(text)
 
+            # SPLIT QUESTION & OPTIONS
+            if len(buffer_lines) >= 5:
+                question_text = buffer_lines[:-4]
+                options = buffer_lines[-4:]
+            else:
+                question_text = buffer_lines
+                options = []
+
             questions.append({
-                "text": "<br/>".join(buffer_text),
-                "answers": buffer_answers,
+                "text": "<br/>".join(question_text),
+                "answers": options,
                 "images": buffer_images,
                 "correct": correct_answers
             })
 
             # RESET
-            buffer_text = []
-            buffer_answers = []
+            buffer_lines = []
             buffer_images = []
             correct_answers = []
 
             continue
 
-        # NORMAL TEXT
-        buffer_text.append(text)
+        buffer_lines.append(text)
 
     # =========================
     # BUILD XML
@@ -143,8 +139,12 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             ET.SubElement(question, "shuffleanswers").text = "true"
             ET.SubElement(question, "answernumbering").text = "abc"
 
-            for ans in q["answers"]:
-                label = ans[0].upper()
+            # mapping A B C D otomatis
+            labels = ["A", "B", "C", "D"]
+
+            for idx, ans in enumerate(q["answers"]):
+
+                label = labels[idx]
                 fraction = "100" if label in q["correct"] else "0"
 
                 a = ET.SubElement(question, "answer", fraction=fraction, format="html")
