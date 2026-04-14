@@ -1,13 +1,16 @@
 import base64
 from docx import Document
+from PIL import Image
+from io import BytesIO
 
 
 def extract_images(docx_file):
     """
     Extract semua gambar dari docx → dict {filename: base64}
+    + compress otomatis agar ukuran XML tidak besar
     """
 
-    docx_file.seek(0)  # 🔥 WAJIB
+    docx_file.seek(0)  # 🔥 WAJIB untuk Streamlit
 
     doc = Document(docx_file)
     images = {}
@@ -17,13 +20,34 @@ def extract_images(docx_file):
 
         if hasattr(rel, "target_part") and "image" in rel.target_ref:
 
-            image_bytes = rel.target_part.blob
-            filename = f"image{index}.png"
+            try:
+                image_bytes = rel.target_part.blob
 
-            encoded = base64.b64encode(image_bytes).decode()
-            images[filename] = encoded
+                # 🔥 BUKA GAMBAR
+                img = Image.open(BytesIO(image_bytes))
 
-            index += 1
+                # 🔥 OPTIONAL: resize (maks 800px)
+                img.thumbnail((800, 800))
+
+                # 🔥 KONVERSI KE JPG + COMPRESS
+                buffer = BytesIO()
+                img.convert("RGB").save(buffer, format="JPEG", quality=60)
+
+                compressed_bytes = buffer.getvalue()
+
+                filename = f"image{index}.jpg"
+
+                encoded = base64.b64encode(compressed_bytes).decode()
+                images[filename] = encoded
+
+                index += 1
+
+            except Exception:
+                # fallback jika gagal compress
+                filename = f"image{index}.png"
+                encoded = base64.b64encode(image_bytes).decode()
+                images[filename] = encoded
+                index += 1
 
     return images
 
