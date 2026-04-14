@@ -3,8 +3,12 @@ from docx import Document
 from PIL import Image
 from io import BytesIO
 import hashlib
+import re
 
 
+# =========================
+# EXTRACT IMAGE
+# =========================
 def extract_images(docx_file):
     """
     Extract + compress + deduplicate image
@@ -29,11 +33,12 @@ def extract_images(docx_file):
             try:
                 image_bytes = rel.target_part.blob
 
-                # 🔥 HASH untuk deduplicate
+                # 🔥 HASH (deduplicate)
                 img_hash = hashlib.md5(image_bytes).hexdigest()
 
                 if img_hash in hash_map:
                     filename = hash_map[img_hash]
+
                 else:
                     img = Image.open(BytesIO(image_bytes))
 
@@ -65,13 +70,43 @@ def extract_images(docx_file):
     return image_map, image_data
 
 
+# =========================
+# 🔥 REPLACE PLACEHOLDER (FIX UTAMA)
+# =========================
 def replace_image_placeholder(text, image_map, image_data, used_images):
     """
-    Replace placeholder + track used images
+    Support semua format:
+    - ----media/image1.png----
+    - ----Image alt text---->...<----media/image1.jpeg----
     """
 
-    for idx, filename in image_map.items():
+    if not text:
+        return text
 
+    # 🔥 REGEX UTAMA (docx2python format)
+    pattern = r'----.*?---->.*?<----media/image(\d+)\.(png|jpeg|jpg)----'
+
+    matches = re.findall(pattern, text)
+
+    for match in matches:
+        idx = int(match[0])
+
+        if idx in image_map:
+            filename = image_map[idx]
+
+            img_tag = f'<img src="@@PLUGINFILE@@/{filename}" />'
+
+            # 🔥 replace seluruh block
+            text = re.sub(
+                r'----.*?---->.*?<----media/image' + str(idx) + r'\.(png|jpeg|jpg)----',
+                img_tag,
+                text
+            )
+
+            used_images[filename] = image_data[filename]
+
+    # 🔥 fallback (format lama)
+    for idx, filename in image_map.items():
         placeholder = f"----media/image{idx}.png----"
 
         if placeholder in text:
@@ -79,15 +114,18 @@ def replace_image_placeholder(text, image_map, image_data, used_images):
                 placeholder,
                 f'<img src="@@PLUGINFILE@@/{filename}" />'
             )
-
             used_images[filename] = image_data[filename]
 
     return text
 
 
+# =========================
+# APPEND IMAGE KE XML
+# =========================
 def append_images_to_xml(xml, used_images):
     """
-    append ONLY used images
+    append ONLY used images ke XML
+    (di dalam questiontext)
     """
 
     for name, data in used_images.items():
