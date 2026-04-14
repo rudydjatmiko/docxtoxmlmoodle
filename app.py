@@ -18,11 +18,11 @@ with colA:
 with colB:
     moodle_version = st.selectbox(
         "🎯 Versi Moodle",
-        ["4.x (Default)", "3.x (multichoiceset)"]
+        ["4.x (Default Multiple Choice)", "3.x (All or Nothing Multiple Choice)"]
     )
 
 if moodle_version.startswith("3"):
-    st.info("⚠️ Pastikan plugin multichoiceset sudah terinstall di Moodle")
+    st.info("⚠️ Pastikan plugin All or Nothing Multiple Choice sudah terinstall di Moodle")
 
 file = st.file_uploader("Upload DOCX", type="docx")
 
