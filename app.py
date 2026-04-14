@@ -21,9 +21,21 @@ with colB:
         ["Default Multiple Choice", "All or Nothing Multiple Choice"]
     )
 
+# =========================
+# 🔥 MAPPING KE ENGINE
+# =========================
 if moodle_version == "All or Nothing Multiple Choice":
+    moodle_type = "multichoiceset"
     st.info("⚠️ Pastikan plugin All-or-Nothing sudah terinstall di Moodle")
+else:
+    moodle_type = "multichoice"
 
+# DEBUG (opsional)
+# st.caption(f"Engine type: {moodle_type}")
+
+# =========================
+# FILE UPLOAD
+# =========================
 file = st.file_uploader("Upload DOCX", type="docx")
 
 # =========================
@@ -41,37 +53,47 @@ if file:
                 st.text(l)
 
     else:
-        xml, stats, logs, title = parse_docx_to_moodle(
-            file,
-            moodle_version=moodle_version
-        )
-
-        st.success(title)
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("PG", stats["MULTIPLE CHOICE"])
-        col2.metric("PG Kompleks", stats["MULTIPLE CHOICE SET"])
-        col3.metric("Essay", stats["ESSAY"])
-
-        filename = file.name.replace(".docx", ".xml")
-
-        st.download_button(
-            "Download XML",
-            xml,
-            file_name=filename,
-            mime="text/xml"
-        )
-
-        # =========================
-        # 🔥 PREVIEW HASIL XML
-        # =========================
-        st.markdown("## 👁️ Preview XML (hasil konversi)")
-
         try:
-            questions = parse_xml_questions(xml)
-            render_all_questions(questions)
+            xml, stats, logs, title = parse_docx_to_moodle(
+                file,
+                moodle_type=moodle_type   # 🔥 FIX DI SINI
+            )
+
+            st.success(title)
+
+            # =========================
+            # STATISTIK
+            # =========================
+            col1, col2, col3 = st.columns(3)
+            col1.metric("PG", stats["MULTIPLE CHOICE"])
+            col2.metric("PG Kompleks", stats["MULTIPLE CHOICE SET"])
+            col3.metric("Essay", stats["ESSAY"])
+
+            # =========================
+            # DOWNLOAD XML
+            # =========================
+            filename = file.name.replace(".docx", ".xml")
+
+            st.download_button(
+                "📥 Download XML",
+                xml,
+                file_name=filename,
+                mime="text/xml"
+            )
+
+            # =========================
+            # 🔥 PREVIEW XML
+            # =========================
+            st.markdown("## 👁️ Preview XML (hasil konversi)")
+
+            try:
+                questions = parse_xml_questions(xml)
+                render_all_questions(questions)
+            except Exception as e:
+                st.error(f"Gagal preview XML: {e}")
+
         except Exception as e:
-            st.error(f"Gagal preview XML: {e}")
+            st.error(f"❌ Error parsing: {e}")
 
 # =========================
 # XML VIEWER
