@@ -7,7 +7,22 @@ st.set_page_config(page_title="Parser", layout="wide")
 
 st.title("📄 DOCX → Moodle XML")
 
-debug_mode = st.checkbox("🧪 Debug Mode")
+# =========================
+# 🔥 TOP CONTROL (SEJAJAR)
+# =========================
+colA, colB = st.columns(2)
+
+with colA:
+    debug_mode = st.checkbox("🧪 Debug Mode")
+
+with colB:
+    moodle_version = st.selectbox(
+        "🎯 Versi Moodle",
+        ["4.x (Default)", "3.x (multichoiceset)"]
+    )
+
+if moodle_version.startswith("3"):
+    st.info("⚠️ Pastikan plugin multichoiceset sudah terinstall di Moodle")
 
 file = st.file_uploader("Upload DOCX", type="docx")
 
@@ -26,7 +41,10 @@ if file:
                 st.text(l)
 
     else:
-        xml, stats, logs, title = parse_docx_to_moodle(file)
+        xml, stats, logs, title = parse_docx_to_moodle(
+            file,
+            moodle_version=moodle_version
+        )
 
         st.success(title)
 
@@ -35,9 +53,6 @@ if file:
         col2.metric("PG Kompleks", stats["MULTIPLE CHOICE SET"])
         col3.metric("Essay", stats["ESSAY"])
 
-        # =========================
-        # DOWNLOAD XML
-        # =========================
         filename = file.name.replace(".docx", ".xml")
 
         st.download_button(
@@ -58,9 +73,8 @@ if file:
         except Exception as e:
             st.error(f"Gagal preview XML: {e}")
 
-
 # =========================
-# XML VIEWER (UPLOAD MANUAL)
+# XML VIEWER
 # =========================
 st.markdown("---")
 st.markdown("## 📂 XML Viewer (Upload File XML)")
@@ -71,8 +85,6 @@ if xml_file:
     try:
         xml_content = xml_file.read().decode("utf-8")
         questions = parse_xml_questions(xml_content)
-
         render_all_questions(questions)
-
     except Exception as e:
         st.error(f"Gagal membaca XML: {e}")
