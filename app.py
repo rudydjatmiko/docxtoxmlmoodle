@@ -21,8 +21,8 @@ with colB:
         ["Default Multiple Choice", "All or Nothing Multiple Choice"]
     )
 
-if moodle_version.startswith("3"):
-    st.info("⚠️ Pastikan plugin All or Nothing Multiple Choice sudah terinstall di Moodle")
+if moodle_version == "All or Nothing Multiple Choice":
+    st.info("⚠️ Pastikan plugin All-or-Nothing sudah terinstall di Moodle")
 
 file = st.file_uploader("Upload DOCX", type="docx")
 
