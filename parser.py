@@ -5,30 +5,15 @@ from docx import Document
 import xml.etree.ElementTree as ET
 
 
-# =========================
-# CLEAN OPTION TEXT
-# =========================
 def clean_option(text):
     return re.sub(r'^[A-D][\.\)]\s*', '', text).strip()
 
 
-# =========================
-# DETECT HEADER (BUANG)
-# =========================
-def is_header(text):
-    keywords = [
-        "daily exam",
-        "academic year",
-        "multiple choice",
-        "choose the right answer"
-    ]
-    text_low = text.lower()
-    return any(k in text_low for k in keywords)
+def is_option_line(text):
+    # opsi biasanya pendek
+    return len(text.split()) <= 10
 
 
-# =========================
-# ANSWER KEY
-# =========================
 def extract_answer_key(text):
     if "ANS:" in text.upper():
         ans = text.upper().split("ANS:")[1].strip()
@@ -36,9 +21,6 @@ def extract_answer_key(text):
     return []
 
 
-# =========================
-# IMAGE HANDLER
-# =========================
 def extract_image_from_run(run):
     if 'graphic' not in run._element.xml:
         return None
@@ -64,9 +46,6 @@ def extract_image_from_run(run):
         return None
 
 
-# =========================
-# MAIN PARSER
-# =========================
 def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     doc = Document(file)
@@ -78,7 +57,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
     buffer_images = []
     correct_answers = []
 
-    started = False  # 🔥 penting untuk skip header
+    started = False  # 🔥 kunci utama
 
     stats = {
         "MULTIPLE CHOICE": 0,
@@ -93,13 +72,13 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             continue
 
         # =========================
-        # SKIP HEADER
+        # DETEKSI START SOAL
         # =========================
         if not started:
-            if is_header(text) or len(text) < 5:
-                continue
-            else:
+            if text.endswith("....") or "?" in text or "called" in text.lower():
                 started = True
+            else:
+                continue
 
         # =========================
         # IMAGE
@@ -116,7 +95,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
             correct_answers = extract_answer_key(text)
 
-            # SPLIT TEXT & OPTIONS
+            # pisahkan soal dan opsi
             if len(buffer_lines) >= 4:
                 question_text = buffer_lines[:-4]
                 options = buffer_lines[-4:]
@@ -124,7 +103,6 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
                 question_text = buffer_lines
                 options = []
 
-            # CLEAN OPTION
             options = [clean_option(o) for o in options]
 
             questions.append({
@@ -134,7 +112,6 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
                 "correct": correct_answers
             })
 
-            # RESET
             buffer_lines = []
             buffer_images = []
             correct_answers = []
@@ -190,7 +167,6 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             labels = ["A", "B", "C", "D"]
 
             for idx, ans in enumerate(q["answers"]):
-
                 fraction = "100" if labels[idx] in q["correct"] else "0"
 
                 a = ET.SubElement(question, "answer", fraction=fraction, format="html")
