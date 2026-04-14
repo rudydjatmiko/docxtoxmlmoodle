@@ -17,7 +17,7 @@ with colA:
 
 with colB:
     moodle_version = st.selectbox(
-        "🎯 Versi Multiple Response",
+        "🎯 Versi Multiple Choice",
         ["Default Multiple Choice", "All or Nothing Multiple Choice"]
     )
 
