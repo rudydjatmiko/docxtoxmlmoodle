@@ -22,14 +22,17 @@ def parse_xml_questions(xml_content):
 
         qtype = q.attrib.get("type")
 
-        name = q.find("name/text").text
+        name_el = q.find("name/text")
+        name = name_el.text if name_el is not None else "No Name"
 
         qtext_el = q.find("questiontext/text")
         qtext = qtext_el.text if qtext_el is not None else ""
 
         answers = []
         for ans in q.findall("answer"):
-            answers.append(ans.find("text").text)
+            txt = ans.find("text")
+            if txt is not None:
+                answers.append(txt.text)
 
         questions.append({
             "name": name,
