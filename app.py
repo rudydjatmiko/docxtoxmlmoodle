@@ -11,6 +11,9 @@ debug_mode = st.checkbox("🧪 Debug Mode")
 
 file = st.file_uploader("Upload DOCX", type="docx")
 
+# =========================
+# DOCX PARSER
+# =========================
 if file:
 
     if debug_mode:
@@ -33,7 +36,7 @@ if file:
         col3.metric("Essay", stats["ESSAY"])
 
         # =========================
-        # 🔥 FIX NAMA FILE
+        # DOWNLOAD XML
         # =========================
         filename = file.name.replace(".docx", ".xml")
 
@@ -43,3 +46,33 @@ if file:
             file_name=filename,
             mime="text/xml"
         )
+
+        # =========================
+        # 🔥 PREVIEW HASIL XML
+        # =========================
+        st.markdown("## 👁️ Preview XML (hasil konversi)")
+
+        try:
+            questions = parse_xml_questions(xml)
+            render_all_questions(questions)
+        except Exception as e:
+            st.error(f"Gagal preview XML: {e}")
+
+
+# =========================
+# XML VIEWER (UPLOAD MANUAL)
+# =========================
+st.markdown("---")
+st.markdown("## 📂 XML Viewer (Upload File XML)")
+
+xml_file = st.file_uploader("Upload XML Moodle", type="xml", key="xml_view")
+
+if xml_file:
+    try:
+        xml_content = xml_file.read().decode("utf-8")
+        questions = parse_xml_questions(xml_content)
+
+        render_all_questions(questions)
+
+    except Exception as e:
+        st.error(f"Gagal membaca XML: {e}")
