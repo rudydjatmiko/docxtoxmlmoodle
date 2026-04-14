@@ -2,32 +2,21 @@ import re
 from docx2python import docx2python
 from utils import wrap_arabic
 
-# 🔥 IMPORT IMAGE HANDLER
 from image_handler import (
     extract_images,
     replace_image_placeholder,
     append_images_to_xml
 )
 
-
-# =========================
-# CONSTANT REGEX
-# =========================
 RE_QUESTION = re.compile(r'^\d+')
 RE_OPTION = re.compile(r'^\(?([A-Da-d])[\.\)]')
 RE_ANS = re.compile(r'\bANS\b', re.IGNORECASE)
 
 
-# =========================
-# NORMALIZE
-# =========================
 def normalize(text):
     return re.sub(r'\s+', '', text).upper()
 
 
-# =========================
-# PREPROCESS TEXT
-# =========================
 def preprocess_lines(lines):
     result = []
     i = 0
@@ -35,21 +24,11 @@ def preprocess_lines(lines):
     while i < len(lines):
         line = lines[i].strip()
 
-        if normalize(line) == "MULTIPLE" and i + 1 < len(lines):
-            if normalize(lines[i + 1]) == "CHOICE":
+        if normalize(line) == "MULTIPLE" and i+1 < len(lines):
+            if normalize(lines[i+1]) == "CHOICE":
                 result.append("MULTIPLECHOICE")
                 i += 2
                 continue
-
-        if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
-            result.append(line + " " + lines[i + 1])
-            i += 2
-            continue
-
-        if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
-            result.append(line + " " + lines[i + 1])
-            i += 2
-            continue
 
         result.append(line)
         i += 1
@@ -57,13 +36,14 @@ def preprocess_lines(lines):
     return result
 
 
-# =========================
-# BUILD MULTICHOICE
-# =========================
-def build_mc(xml, stats, q_text, options, ans, q_num, images):
+def build_mc(xml, stats, q_text, options, ans, q_num,
+             image_map, image_data):
 
-    # 🔥 REPLACE GAMBAR
-    q_text = replace_image_placeholder(q_text, images)
+    used_images = {}
+
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
 
     correct = re.findall(r'[A-D]', ans.upper())
     is_multi = len(correct) > 1
@@ -75,6 +55,10 @@ def build_mc(xml, stats, q_text, options, ans, q_num, images):
 
     xml.append('<questiontext format="html">')
     xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+
+    # 🔥 hanya gambar yg dipakai
+    append_images_to_xml(xml, used_images)
+
     xml.append('</questiontext>')
 
     if not is_multi:
@@ -84,16 +68,12 @@ def build_mc(xml, stats, q_text, options, ans, q_num, images):
     xml.append('<answernumbering>abc</answernumbering>')
 
     for i, opt in enumerate(options):
-        label = chr(65 + i)
+        label = chr(65+i)
         frac = "100" if label in correct else "0"
 
         xml.append(f'<answer fraction="{frac}" format="html">')
         xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
-        xml.append('<feedback format="html"><text></text></feedback>')
         xml.append('</answer>')
-
-    # 🔥 TAMBAHKAN GAMBAR KE XML
-    append_images_to_xml(xml, images)
 
     xml.append('</question>')
 
@@ -103,65 +83,50 @@ def build_mc(xml, stats, q_text, options, ans, q_num, images):
         stats["MULTIPLE CHOICE"] += 1
 
 
-# =========================
-# BUILD ESSAY
-# =========================
-def build_essay(xml, stats, q_text, ans, q_num, images):
+def build_essay(xml, stats, q_text, ans, q_num,
+                image_map, image_data):
 
-    q_text = replace_image_placeholder(q_text, images)
+    used_images = {}
+
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
 
     xml.append('<question type="essay">')
     xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
 
     xml.append('<questiontext format="html">')
     xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+
+    append_images_to_xml(xml, used_images)
+
     xml.append('</questiontext>')
 
     xml.append('<generalfeedback format="html">')
     xml.append(f'<text><![CDATA[{ans}]]></text>')
     xml.append('</generalfeedback>')
 
-    # 🔥 TAMBAHKAN GAMBAR
-    append_images_to_xml(xml, images)
-
     xml.append('</question>')
 
     stats["ESSAY"] += 1
 
 
-# =========================
-# MAIN PARSER
-# =========================
 def parse_docx_to_moodle(file):
 
     logs = []
 
-    # ===== TEXT =====
-    file.seek(0)  # 🔥 WAJIB
+    file.seek(0)
     doc = docx2python(file)
 
     lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
     lines = preprocess_lines(lines)
 
-    # ===== IMAGES =====
-    file.seek(0)  # 🔥 WAJIB
-    images = extract_images(file)
+    file.seek(0)
+    image_map, image_data = extract_images(file)
     file.seek(0)
 
-    logs.append(f"[DEBUG] TOTAL IMAGES: {len(images)}")
+    logs.append(f"Total image unique: {len(image_data)}")
 
-    # ===== HEADER =====
-    header = []
-    i = 0
-    while i < len(lines):
-        if normalize(lines[i]) in ["MULTIPLECHOICE", "ESSAY"]:
-            break
-        header.append(lines[i])
-        i += 1
-
-    title = " - ".join(header)
-
-    # ===== INIT =====
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
     stats = {
@@ -176,7 +141,8 @@ def parse_docx_to_moodle(file):
     ans = ""
     q_num = 1
 
-    # ===== LOOP =====
+    i = 0
+
     while i < len(lines):
 
         line = lines[i]
@@ -199,9 +165,11 @@ def parse_docx_to_moodle(file):
             ans = match.group(1) if match else ""
 
             if mode == "ESSAY":
-                build_essay(xml, stats, q_text, ans, q_num, images)
+                build_essay(xml, stats, q_text, ans, q_num,
+                            image_map, image_data)
             else:
-                build_mc(xml, stats, q_text, options, ans, q_num, images)
+                build_mc(xml, stats, q_text, options, ans, q_num,
+                         image_map, image_data)
 
             q_num += 1
             q_text = ""
@@ -238,4 +206,4 @@ def parse_docx_to_moodle(file):
 
     xml.append('</quiz>')
 
-    return "\n".join(xml), stats, logs, title
+    return "\n".join(xml), stats, logs, "Converted"
