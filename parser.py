@@ -5,33 +5,10 @@ from docx import Document
 import xml.etree.ElementTree as ET
 
 
-# =========================
-# DETEKSI SOAL (FLEKSIBEL TAPI AMAN)
-# =========================
-def is_question(text):
-    text = text.strip()
-
-    # Harus diawali angka + titik
-    if not re.match(r'^\d+', text):
-        return False
-
-    # Ambil 5 karakter awal untuk cek titik
-    prefix = text[:5]
-
-    return "." in prefix
-
-
-# =========================
-# DETEKSI OPSI
-# =========================
 def is_option(text):
-    text = text.strip()
-    return re.match(r'^[A-D][\.\)]\s*', text) is not None
+    return re.match(r'^[A-D][\.\)]\s*', text.strip()) is not None
 
 
-# =========================
-# AMBIL KUNCI JAWABAN
-# =========================
 def extract_answer_key(text):
     if "ANS:" in text.upper():
         ans = text.upper().split("ANS:")[1].strip()
@@ -39,9 +16,6 @@ def extract_answer_key(text):
     return []
 
 
-# =========================
-# IMAGE HANDLER
-# =========================
 def extract_image_from_run(run):
     if 'graphic' not in run._element.xml:
         return None
@@ -61,18 +35,12 @@ def extract_image_from_run(run):
         filename = f"{uuid.uuid4().hex}.jpg"
         encoded = base64.b64encode(image_bytes).decode("utf-8")
 
-        return {
-            "name": filename,
-            "data": encoded
-        }
+        return {"name": filename, "data": encoded}
 
-    except Exception:
+    except:
         return None
 
 
-# =========================
-# PARSER UTAMA
-# =========================
 def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     doc = Document(file)
@@ -80,10 +48,9 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     questions = []
 
-    current_question = False
-    current_text = ""
-    current_answers = []
-    current_images = []
+    buffer_text = []
+    buffer_answers = []
+    buffer_images = []
     correct_answers = []
 
     stats = {
@@ -92,75 +59,45 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
         "ESSAY": 0
     }
 
-    # =========================
-    # LOOP PARAGRAPH
-    # =========================
     for para in doc.paragraphs:
 
-        raw_text = para.text
-        text = raw_text.strip()
+        text = para.text.strip()
 
         if not text:
             continue
 
-        # =========================
-        # OPSI (PRIORITAS 1)
-        # =========================
+        # OPTION
         if is_option(text):
-            if current_question:
-                current_answers.append(text)
+            buffer_answers.append(text)
             continue
 
-        # =========================
-        # KUNCI JAWABAN
-        # =========================
+        # IMAGE
+        for run in para.runs:
+            img = extract_image_from_run(run)
+            if img:
+                buffer_images.append(img)
+
+        # ANSWER KEY (END OF QUESTION)
         if "ANS:" in text.upper():
             correct_answers = extract_answer_key(text)
-            continue
 
-        # =========================
-        # SOAL BARU
-        # =========================
-        if is_question(text):
+            questions.append({
+                "text": "<br/>".join(buffer_text),
+                "answers": buffer_answers,
+                "images": buffer_images,
+                "correct": correct_answers
+            })
 
-            if current_question:
-                questions.append({
-                    "text": current_text,
-                    "answers": current_answers,
-                    "images": current_images,
-                    "correct": correct_answers
-                })
-
-            current_question = True
-            current_text = text
-            current_answers = []
-            current_images = []
+            # RESET
+            buffer_text = []
+            buffer_answers = []
+            buffer_images = []
             correct_answers = []
 
             continue
 
-        # =========================
-        # TEKS LANJUTAN (TERMASUK 1) 2) DLL)
-        # =========================
-        if current_question:
-            current_text += "<br/>" + text
-
-        # =========================
-        # IMAGE INLINE
-        # =========================
-        for run in para.runs:
-            img = extract_image_from_run(run)
-            if img and current_question:
-                current_images.append(img)
-
-    # append terakhir
-    if current_question:
-        questions.append({
-            "text": current_text,
-            "answers": current_answers,
-            "images": current_images,
-            "correct": correct_answers
-        })
+        # NORMAL TEXT
+        buffer_text.append(text)
 
     # =========================
     # BUILD XML
@@ -181,11 +118,9 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
         question = ET.SubElement(quiz, "question", type=qtype)
 
-        # NAME
         name = ET.SubElement(question, "name")
         ET.SubElement(name, "text").text = f"Soal {i+1:02d}"
 
-        # QUESTION TEXT
         qtext = ET.SubElement(question, "questiontext", format="html")
         text_el = ET.SubElement(qtext, "text")
 
@@ -200,9 +135,6 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             file_el = ET.SubElement(qtext, "file", name=img["name"], encoding="base64")
             file_el.text = img["data"]
 
-        # =========================
-        # JAWABAN
-        # =========================
         if qtype != "essay":
 
             single = ET.SubElement(question, "single")
@@ -212,7 +144,6 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             ET.SubElement(question, "answernumbering").text = "abc"
 
             for ans in q["answers"]:
-
                 label = ans[0].upper()
                 fraction = "100" if label in q["correct"] else "0"
 
