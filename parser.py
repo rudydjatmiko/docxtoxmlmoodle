@@ -35,20 +35,17 @@ def preprocess_lines(lines):
     while i < len(lines):
         line = lines[i].strip()
 
-        # MULTIPLE + CHOICE split
         if normalize(line) == "MULTIPLE" and i + 1 < len(lines):
             if normalize(lines[i + 1]) == "CHOICE":
                 result.append("MULTIPLECHOICE")
                 i += 2
                 continue
 
-        # opsi terpisah
         if re.match(r'^[A-Da-d][\.\)]?$', line) and i + 1 < len(lines):
             result.append(line + " " + lines[i + 1])
             i += 2
             continue
 
-        # nomor terpisah
         if re.match(r'^\d+[\.\)]?$', line) and i + 1 < len(lines):
             result.append(line + " " + lines[i + 1])
             i += 2
@@ -65,10 +62,9 @@ def preprocess_lines(lines):
 # =========================
 def build_mc(xml, stats, q_text, options, ans, q_num, images):
 
-    # 🔥 replace gambar placeholder
+    # 🔥 REPLACE GAMBAR
     q_text = replace_image_placeholder(q_text, images)
 
-    # 🔥 parse jawaban
     correct = re.findall(r'[A-D]', ans.upper())
     is_multi = len(correct) > 1
 
@@ -87,7 +83,6 @@ def build_mc(xml, stats, q_text, options, ans, q_num, images):
     xml.append('<shuffleanswers>true</shuffleanswers>')
     xml.append('<answernumbering>abc</answernumbering>')
 
-    # 🔥 ALL OR NOTHING
     for i, opt in enumerate(options):
         label = chr(65 + i)
         frac = "100" if label in correct else "0"
@@ -97,12 +92,11 @@ def build_mc(xml, stats, q_text, options, ans, q_num, images):
         xml.append('<feedback format="html"><text></text></feedback>')
         xml.append('</answer>')
 
-    # 🔥 tambahkan gambar ke XML
+    # 🔥 TAMBAHKAN GAMBAR KE XML
     append_images_to_xml(xml, images)
 
     xml.append('</question>')
 
-    # stats
     if is_multi:
         stats["MULTIPLE CHOICE SET"] += 1
     else:
@@ -127,7 +121,7 @@ def build_essay(xml, stats, q_text, ans, q_num, images):
     xml.append(f'<text><![CDATA[{ans}]]></text>')
     xml.append('</generalfeedback>')
 
-    # 🔥 tambahkan gambar
+    # 🔥 TAMBAHKAN GAMBAR
     append_images_to_xml(xml, images)
 
     xml.append('</question>')
@@ -140,13 +134,21 @@ def build_essay(xml, stats, q_text, ans, q_num, images):
 # =========================
 def parse_docx_to_moodle(file):
 
+    logs = []
+
     # ===== TEXT =====
+    file.seek(0)  # 🔥 WAJIB
     doc = docx2python(file)
+
     lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
     lines = preprocess_lines(lines)
 
     # ===== IMAGES =====
+    file.seek(0)  # 🔥 WAJIB
     images = extract_images(file)
+    file.seek(0)
+
+    logs.append(f"[DEBUG] TOTAL IMAGES: {len(images)}")
 
     # ===== HEADER =====
     header = []
@@ -180,7 +182,6 @@ def parse_docx_to_moodle(file):
         line = lines[i]
         norm = normalize(line)
 
-        # MODE SWITCH
         if norm == "MULTIPLECHOICE":
             mode = "MC"
             i += 1
@@ -192,7 +193,6 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ===== ANS =====
         if RE_ANS.search(line):
 
             match = re.search(r'ANS\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
@@ -211,13 +211,11 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ===== ESSAY MODE =====
         if mode == "ESSAY":
             q_text += "<br/>" + line
             i += 1
             continue
 
-        # ===== QUESTION =====
         if RE_QUESTION.match(line):
             q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
             options = []
@@ -225,14 +223,12 @@ def parse_docx_to_moodle(file):
             i += 1
             continue
 
-        # ===== OPTION =====
         if RE_OPTION.match(line):
             opt = re.sub(r'^\(?[A-Da-d][\.\)]\s*', '', line)
             options.append(opt)
             i += 1
             continue
 
-        # ===== CONTINUE =====
         if options:
             options[-1] += "<br/>" + line
         else:
@@ -242,4 +238,4 @@ def parse_docx_to_moodle(file):
 
     xml.append('</quiz>')
 
-    return "\n".join(xml), stats, [], title
+    return "\n".join(xml), stats, logs, title
