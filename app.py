@@ -1,6 +1,7 @@
 import streamlit as st
 from parser import parse_docx_to_moodle
 from debug_parser import debug_docx
+from xml_viewer import parse_xml_questions, render_all_questions
 
 st.set_page_config(page_title="Parser", layout="wide")
 
