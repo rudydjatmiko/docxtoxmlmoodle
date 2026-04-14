@@ -5,6 +5,30 @@ from docx import Document
 import xml.etree.ElementTree as ET
 
 
+# =========================
+# CLEAN OPTION TEXT
+# =========================
+def clean_option(text):
+    return re.sub(r'^[A-D][\.\)]\s*', '', text).strip()
+
+
+# =========================
+# DETECT HEADER (BUANG)
+# =========================
+def is_header(text):
+    keywords = [
+        "daily exam",
+        "academic year",
+        "multiple choice",
+        "choose the right answer"
+    ]
+    text_low = text.lower()
+    return any(k in text_low for k in keywords)
+
+
+# =========================
+# ANSWER KEY
+# =========================
 def extract_answer_key(text):
     if "ANS:" in text.upper():
         ans = text.upper().split("ANS:")[1].strip()
@@ -12,6 +36,9 @@ def extract_answer_key(text):
     return []
 
 
+# =========================
+# IMAGE HANDLER
+# =========================
 def extract_image_from_run(run):
     if 'graphic' not in run._element.xml:
         return None
@@ -37,6 +64,9 @@ def extract_image_from_run(run):
         return None
 
 
+# =========================
+# MAIN PARSER
+# =========================
 def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     doc = Document(file)
@@ -47,6 +77,8 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
     buffer_lines = []
     buffer_images = []
     correct_answers = []
+
+    started = False  # 🔥 penting untuk skip header
 
     stats = {
         "MULTIPLE CHOICE": 0,
@@ -60,24 +92,40 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
         if not text:
             continue
 
+        # =========================
+        # SKIP HEADER
+        # =========================
+        if not started:
+            if is_header(text) or len(text) < 5:
+                continue
+            else:
+                started = True
+
+        # =========================
         # IMAGE
+        # =========================
         for run in para.runs:
             img = extract_image_from_run(run)
             if img:
                 buffer_images.append(img)
 
+        # =========================
         # END OF QUESTION
+        # =========================
         if "ANS:" in text.upper():
 
             correct_answers = extract_answer_key(text)
 
-            # SPLIT QUESTION & OPTIONS
-            if len(buffer_lines) >= 5:
+            # SPLIT TEXT & OPTIONS
+            if len(buffer_lines) >= 4:
                 question_text = buffer_lines[:-4]
                 options = buffer_lines[-4:]
             else:
                 question_text = buffer_lines
                 options = []
+
+            # CLEAN OPTION
+            options = [clean_option(o) for o in options]
 
             questions.append({
                 "text": "<br/>".join(question_text),
@@ -139,13 +187,11 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             ET.SubElement(question, "shuffleanswers").text = "true"
             ET.SubElement(question, "answernumbering").text = "abc"
 
-            # mapping A B C D otomatis
             labels = ["A", "B", "C", "D"]
 
             for idx, ans in enumerate(q["answers"]):
 
-                label = labels[idx]
-                fraction = "100" if label in q["correct"] else "0"
+                fraction = "100" if labels[idx] in q["correct"] else "0"
 
                 a = ET.SubElement(question, "answer", fraction=fraction, format="html")
                 ET.SubElement(a, "text").text = f"<![CDATA[{ans}]]>"
