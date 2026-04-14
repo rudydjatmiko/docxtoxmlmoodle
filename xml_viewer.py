@@ -57,32 +57,50 @@ def parse_xml_questions(xml_content):
 
 
 # =========================
-# RENDER SOAL
+# 🔥 INLINE IMAGE FIX
+# =========================
+def inject_base64_to_html(text, images):
+    """
+    Ganti @@PLUGINFILE@@ → base64 inline
+    supaya gambar muncul di posisi yang benar
+    """
+
+    if not text:
+        return text
+
+    for name, data in images.items():
+
+        # default jpeg (aman)
+        base64_src = f"data:image/jpeg;base64,{data}"
+
+        text = text.replace(
+            f"@@PLUGINFILE@@/{name}",
+            base64_src
+        )
+
+    return text
+
+
+# =========================
+# RENDER 1 SOAL
 # =========================
 def render_question(q, idx):
-    """
-    Tampilkan 1 soal
-    """
 
     st.markdown(f"### 📝 Soal {idx+1} ({q['type']})")
 
     if q["name"]:
         st.caption(q["name"])
 
-    # tampilkan soal (HTML)
-    if q["text"]:
-        st.markdown(q["text"], unsafe_allow_html=True)
+    # 🔥 inject image ke HTML
+    html = inject_base64_to_html(q["text"], q["images"])
 
-    # tampilkan gambar
-    if q["images"]:
-        for name, data in q["images"].items():
-            try:
-                img_bytes = base64.b64decode(data)
-                st.image(img_bytes, caption=name)
-            except:
-                st.warning(f"Gagal decode gambar: {name}")
+    # tampilkan soal + gambar INLINE
+    if html:
+        st.markdown(html, unsafe_allow_html=True)
 
-    # tampilkan jawaban
+    # =========================
+    # PILIHAN JAWABAN
+    # =========================
     if q["answers"]:
         st.markdown("**Pilihan Jawaban:**")
 
@@ -96,12 +114,9 @@ def render_question(q, idx):
 
 
 # =========================
-# RENDER SEMUA
+# RENDER SEMUA SOAL
 # =========================
 def render_all_questions(questions):
-    """
-    Render semua soal
-    """
 
     st.success(f"Total soal: {len(questions)}")
 
