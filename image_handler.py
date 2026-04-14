@@ -2,18 +2,24 @@ import base64
 from docx import Document
 from PIL import Image
 from io import BytesIO
+import hashlib
 
 
 def extract_images(docx_file):
     """
-    Extract semua gambar dari docx → dict {filename: base64}
-    + compress otomatis agar ukuran XML tidak besar
+    Extract + compress + deduplicate image
+    return:
+        image_map: {index: filename}
+        image_data: {filename: base64}
     """
 
-    docx_file.seek(0)  # 🔥 WAJIB untuk Streamlit
-
+    docx_file.seek(0)
     doc = Document(docx_file)
-    images = {}
+
+    image_map = {}
+    image_data = {}
+    hash_map = {}
+
     index = 1
 
     for rel in doc.part._rels.values():
@@ -23,54 +29,68 @@ def extract_images(docx_file):
             try:
                 image_bytes = rel.target_part.blob
 
-                # 🔥 BUKA GAMBAR
-                img = Image.open(BytesIO(image_bytes))
+                # 🔥 HASH untuk deduplicate
+                img_hash = hashlib.md5(image_bytes).hexdigest()
 
-                # 🔥 OPTIONAL: resize (maks 800px)
-                img.thumbnail((800, 800))
+                if img_hash in hash_map:
+                    filename = hash_map[img_hash]
+                else:
+                    img = Image.open(BytesIO(image_bytes))
 
-                # 🔥 KONVERSI KE JPG + COMPRESS
-                buffer = BytesIO()
-                img.convert("RGB").save(buffer, format="JPEG", quality=60)
+                    # 🔥 resize
+                    img.thumbnail((800, 800))
 
-                compressed_bytes = buffer.getvalue()
+                    # 🔥 convert + compress
+                    buffer = BytesIO()
+                    img.convert("RGB").save(
+                        buffer,
+                        format="JPEG",
+                        quality=55,
+                        optimize=True
+                    )
 
-                filename = f"image{index}.jpg"
+                    compressed = buffer.getvalue()
 
-                encoded = base64.b64encode(compressed_bytes).decode()
-                images[filename] = encoded
+                    filename = f"img_{len(image_data)+1}.jpg"
 
+                    image_data[filename] = base64.b64encode(compressed).decode()
+                    hash_map[img_hash] = filename
+
+                image_map[index] = filename
                 index += 1
 
             except Exception:
-                # fallback jika gagal compress
-                filename = f"image{index}.png"
-                encoded = base64.b64encode(image_bytes).decode()
-                images[filename] = encoded
-                index += 1
+                continue
 
-    return images
+    return image_map, image_data
 
 
-def replace_image_placeholder(text, image_map):
+def replace_image_placeholder(text, image_map, image_data, used_images):
     """
-    Ganti placeholder ----media/imageX.png----
-    menjadi <img Moodle>
+    Replace placeholder + track used images
     """
-    for i, name in enumerate(image_map.keys(), start=1):
-        placeholder = f"----media/image{i}.png----"
-        img_tag = f'<img src="@@PLUGINFILE@@/{name}" />'
 
-        text = text.replace(placeholder, img_tag)
+    for idx, filename in image_map.items():
+
+        placeholder = f"----media/image{idx}.png----"
+
+        if placeholder in text:
+            text = text.replace(
+                placeholder,
+                f'<img src="@@PLUGINFILE@@/{filename}" />'
+            )
+
+            used_images[filename] = image_data[filename]
 
     return text
 
 
-def append_images_to_xml(xml, image_map):
+def append_images_to_xml(xml, used_images):
     """
-    Tambahkan file base64 ke XML Moodle
+    append ONLY used images
     """
-    for name, data in image_map.items():
+
+    for name, data in used_images.items():
         xml.append(
             f'<file name="{name}" encoding="base64">{data}</file>'
         )
