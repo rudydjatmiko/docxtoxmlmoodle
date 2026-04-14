@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 # =========================
 def is_question(text):
     text = text.strip()
-    return re.match(r'^\d+[\.\)]\s+', text) is not None
+    return re.match(r'^\d+[\.\)]\s*', text) is not None
 
 
 # =========================
@@ -18,11 +18,11 @@ def is_question(text):
 # =========================
 def is_option(text):
     text = text.strip()
-    return re.match(r'^[A-D][\.\)]\s+', text) is not None
+    return re.match(r'^[A-D][\.\)]\s*', text) is not None
 
 
 # =========================
-# DETEKSI JAWABAN (ANS:)
+# AMBIL KUNCI JAWABAN
 # =========================
 def extract_answer_key(text):
     if "ANS:" in text.upper():
@@ -63,7 +63,7 @@ def extract_image_from_run(run):
 
 
 # =========================
-# MAIN PARSER
+# PARSER UTAMA
 # =========================
 def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
@@ -71,13 +71,13 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
     quiz = ET.Element("quiz")
 
+    questions = []
+
     current_question = None
     current_text = ""
     current_answers = []
     current_images = []
     correct_answers = []
-
-    questions = []
 
     stats = {
         "MULTIPLE CHOICE": 0,
@@ -92,7 +92,28 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
         text = para.text.strip()
 
-        # === SOAL BARU ===
+        # skip kosong
+        if not text:
+            continue
+
+        # =========================
+        # 🔥 OPSI (PRIORITAS UTAMA)
+        # =========================
+        if is_option(text):
+            if current_question:
+                current_answers.append(text)
+            continue
+
+        # =========================
+        # 🔥 KUNCI JAWABAN
+        # =========================
+        if "ANS:" in text.upper():
+            correct_answers = extract_answer_key(text)
+            continue
+
+        # =========================
+        # 🔥 SOAL BARU
+        # =========================
         if is_question(text):
 
             if current_question:
@@ -109,20 +130,17 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
             current_images = []
             correct_answers = []
 
-        # === OPSI ===
-        elif is_option(text):
-            current_answers.append(text)
+            continue
 
-        # === KUNCI ===
-        elif "ANS:" in text.upper():
-            correct_answers = extract_answer_key(text)
+        # =========================
+        # TEKS LANJUTAN
+        # =========================
+        if current_question:
+            current_text += "<br/>" + text
 
-        # === TEKS BIASA ===
-        else:
-            if current_question and text:
-                current_text += "<br/>" + text
-
-        # === IMAGE DETECTION ===
+        # =========================
+        # IMAGE INLINE
+        # =========================
         for run in para.runs:
             img = extract_image_from_run(run)
             if img and current_question:
@@ -142,7 +160,7 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
     # =========================
     for i, q in enumerate(questions):
 
-        # DETERMINE TYPE
+        # tentukan tipe soal
         if len(q["answers"]) == 0:
             qtype = "essay"
             stats["ESSAY"] += 1
@@ -167,18 +185,20 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
         html = q["text"]
 
-        # INSERT IMAGE
+        # masukkan gambar
         for img in q["images"]:
             html += f'<br/><img src="@@PLUGINFILE@@/{img["name"]}"/>'
 
         text_el.text = f"<![CDATA[{html}]]>"
 
-        # FILE IMAGE
+        # file gambar
         for img in q["images"]:
             file_el = ET.SubElement(qtext, "file", name=img["name"], encoding="base64")
             file_el.text = img["data"]
 
-        # ANSWERS
+        # =========================
+        # JAWABAN
+        # =========================
         if qtype != "essay":
 
             single = ET.SubElement(question, "single")
@@ -189,8 +209,12 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
 
             for ans in q["answers"]:
 
-                label = ans[0]
-                fraction = "100" if label in q["correct"] else "0"
+                label = ans[0].upper()
+
+                if label in q["correct"]:
+                    fraction = "100"
+                else:
+                    fraction = "0"
 
                 a = ET.SubElement(question, "answer", fraction=fraction, format="html")
                 ET.SubElement(a, "text").text = f"<![CDATA[{ans}]]>"
