@@ -17,8 +17,8 @@ with colA:
 
 with colB:
     moodle_version = st.selectbox(
-        "🎯 Versi Moodle",
-        ["4.x (Default Multiple Choice)", "3.x (All or Nothing Multiple Choice)"]
+        "🎯 Versi Multiple Response",
+        ["Default Multiple Choice", "All or Nothing Multiple Choice"]
     )
 
 if moodle_version.startswith("3"):
