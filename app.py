@@ -1,7 +1,7 @@
 import streamlit as st
-from docxtoxmlmoodle.core.docx_reader import read_docx
-from docxtoxmlmoodle.parser import run_parser
-from docxtoxmlmoodle.core.builder import build_xml
+from core.docx_reader import read_docx
+from parser import run_parser
+from core.builder import build_xml
 import os
 
 st.set_page_config(page_title="DOCX to Moodle XML", layout="centered")
