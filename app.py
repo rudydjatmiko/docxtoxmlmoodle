@@ -30,8 +30,11 @@ st.title("DOCX → XML Moodle")
 if "xml_result" not in st.session_state:
     st.session_state.xml_result = None
 
+if "stats" not in st.session_state:
+    st.session_state.stats = None
+
 # ======================
-# UPLOAD (WAJIB DI ATAS)
+# UPLOAD
 # ======================
 uploaded_file = st.file_uploader("", type=["docx"])
 
@@ -77,7 +80,6 @@ if uploaded_file is not None and xml_btn:
         with zipfile.ZipFile(path) as z:
             xml = z.read("word/document.xml").decode("utf-8")
 
-        # tampilkan apa adanya (tanpa tambahan)
         st.text_area("", xml, height=500)
 
     except Exception as e:
@@ -91,15 +93,53 @@ if uploaded_file is not None and process_btn:
         path = save_temp(uploaded_file)
 
         questions = run_parser(path)
-        xml_output = build_xml(questions)
 
+        # ======================
+        # HITUNG STATISTIK
+        # ======================
+        mc = 0
+        mc_multi = 0
+        essay = 0
+
+        for q in questions:
+            if q["choices"]:
+                if len(q["answers"]) > 1:
+                    mc_multi += 1
+                else:
+                    mc += 1
+            else:
+                essay += 1
+
+        st.session_state.stats = {
+            "mc": mc,
+            "mc_multi": mc_multi,
+            "essay": essay
+        }
+
+        # ======================
+        # BUILD XML
+        # ======================
+        xml_output = build_xml(questions)
         st.session_state.xml_result = xml_output
 
     except Exception as e:
         st.error(str(e))
 
 # ======================
-# RESULT
+# TAMPILKAN STATISTIK
+# ======================
+if st.session_state.stats:
+
+    st.markdown("### Statistik Soal")
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("MC", st.session_state.stats["mc"])
+    col2.metric("Multi Answer", st.session_state.stats["mc_multi"])
+    col3.metric("Essay", st.session_state.stats["essay"])
+
+# ======================
+# RESULT XML
 # ======================
 if st.session_state.xml_result:
 
@@ -112,6 +152,5 @@ if st.session_state.xml_result:
         mime="text/xml"
     )
 
-    # preview tetap minimal
     with st.expander("Preview"):
         st.text_area("", st.session_state.xml_result, height=400)
