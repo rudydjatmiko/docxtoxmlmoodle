@@ -1,6 +1,6 @@
 from core.parser_engine import parse
-from processors.content_processor import process
+from core.hybrid_reader import read_docx_hybrid
 
-def run_parser(elements):
-    elements = process(elements)
+def run_parser(path):
+    elements = read_docx_hybrid(path)
     return parse(elements)
