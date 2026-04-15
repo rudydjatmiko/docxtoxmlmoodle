@@ -2,7 +2,7 @@ import sys
 import os
 
 # ======================
-# FIX PATH (WAJIB)
+# FIX PATH
 # ======================
 BASE_DIR = os.path.dirname(__file__)
 sys.path.insert(0, BASE_DIR)
@@ -15,25 +15,16 @@ from docx import Document
 from core.docx_reader import read_docx
 from parser import run_parser
 from core.builder import build_xml
-from utils.xml_parser import get_xml_info
 
 # ======================
 # CONFIG
 # ======================
-st.set_page_config(
-    page_title="DOCX to Moodle XML",
-    page_icon="📄",
-    layout="centered"
-)
+st.set_page_config(page_title="DOCX to XML", layout="centered")
+
+st.title("DOCX → XML")
 
 # ======================
-# TITLE
-# ======================
-st.title("📄 DOCX → Moodle XML Converter")
-st.caption("Convert DOCX ke XML Moodle + Debug Tools (RAW, Baris, XML)")
-
-# ======================
-# SESSION STATE
+# STATE
 # ======================
 if "xml_result" not in st.session_state:
     st.session_state.xml_result = None
@@ -41,182 +32,83 @@ if "xml_result" not in st.session_state:
 # ======================
 # UPLOAD
 # ======================
-st.markdown("### 📥 Upload File DOCX")
+uploaded_file = st.file_uploader("", type=["docx"])
 
-uploaded_file = st.file_uploader(
-    "Upload file",
-    type=["docx"],
-    label_visibility="collapsed"
-)
-
-# ======================
-# HELPER
-# ======================
-def save_temp(uploaded_file):
-    temp_path = os.path.join(BASE_DIR, "temp.docx")
-    with open(temp_path, "wb") as f:
-        f.write(uploaded_file.read())
-    return temp_path
+def save_temp(file):
+    path = os.path.join(BASE_DIR, "temp.docx")
+    with open(path, "wb") as f:
+        f.write(file.read())
+    return path
 
 # ======================
-# BUTTONS
+# BUTTON
 # ======================
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3 = st.columns(3)
 
-process_btn = col1.button("🚀 Proses")
-reset_btn = col2.button("🔄 Reset")
-debug_raw_btn = col3.button("📄 RAW")
-debug_lines_btn = col4.button("🔍 Baris")
-debug_xml_btn = col5.button("🧬 XML")
+process_btn = col1.button("Proses")
+raw_btn = col2.button("RAW")
+xml_btn = col3.button("XML")
 
 # ======================
-# RESET
+# RAW (python-docx)
 # ======================
-if reset_btn:
-    st.session_state.xml_result = None
+if uploaded_file and raw_btn:
+    try:
+        path = save_temp(uploaded_file)
+        doc = Document(path)
 
-    temp_path = os.path.join(BASE_DIR, "temp.docx")
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
+        lines = [p.text for p in doc.paragraphs]
+        st.code("\n".join(lines))
 
-    st.rerun()
-
-# ======================
-# DEBUG RAW (ASLI DOCX)
-# ======================
-if uploaded_file and debug_raw_btn:
-
-    with st.spinner("🔍 Membaca RAW DOCX..."):
-
-        try:
-            temp_path = save_temp(uploaded_file)
-            doc = Document(temp_path)
-
-            st.subheader("📄 RAW TEXT (ASLI)")
-
-            lines = []
-            for para in doc.paragraphs:
-                text = para.text if para.text else "[KOSONG]"
-                lines.append(text)
-
-            st.code("\n".join(lines))
-
-        except Exception as e:
-            st.error(f"❌ Error RAW: {str(e)}")
+    except Exception as e:
+        st.error(str(e))
 
 # ======================
-# DEBUG BARIS
+# XML RAW (ASLI DOCX)
 # ======================
-if uploaded_file and debug_lines_btn:
+if uploaded_file and xml_btn:
+    try:
+        import zipfile
 
-    with st.spinner("🔍 Membaca Baris..."):
+        path = save_temp(uploaded_file)
 
-        try:
-            temp_path = save_temp(uploaded_file)
-            elements = read_docx(temp_path)
+        with zipfile.ZipFile(path) as z:
+            xml = z.read("word/document.xml").decode("utf-8")
 
-            st.subheader("🔍 DEBUG BARIS")
+        st.code(xml)
 
-            lines = []
-
-            for i, el in enumerate(elements):
-                text = el.get("text", "").strip()
-                if not text:
-                    text = "[KOSONG]"
-
-                img_count = len(el.get("images", []))
-
-                line = f"{i+1:03d} | {text}"
-
-                if img_count > 0:
-                    line += f"  🖼️({img_count})"
-
-                if "ANS:" in text:
-                    line = "🔑 " + line
-
-                elif len(text.split()) <= 5:
-                    line = "👉 " + line
-
-                lines.append(line)
-
-            st.code("\n".join(lines))
-
-        except Exception as e:
-            st.error(f"❌ Error Baris: {str(e)}")
+    except Exception as e:
+        st.error(str(e))
 
 # ======================
-# DEBUG XML (NUMPR + DRAWING)
-# ======================
-if uploaded_file and debug_xml_btn:
-
-    with st.spinner("🧬 Membaca XML DOCX..."):
-
-        try:
-            temp_path = save_temp(uploaded_file)
-            doc = Document(temp_path)
-
-            st.subheader("🧬 DEBUG XML (w:numPr & w:drawing)")
-
-            output = []
-
-            for i, para in enumerate(doc.paragraphs):
-
-                text = para.text.strip() if para.text else "[KOSONG]"
-
-                numbering, has_drawing = get_xml_info(para)
-
-                line = f"{i+1:03d} | {text}"
-
-                if numbering:
-                    line += f"\n     numPr: level={numbering['level']} numId={numbering['numId']}"
-
-                if has_drawing:
-                    line += "\n     🖼️ drawing detected"
-
-                output.append(line)
-
-            st.code("\n\n".join(output))
-
-        except Exception as e:
-            st.error(f"❌ Error XML: {str(e)}")
-
-# ======================
-# PROCESS DOCX → XML
+# PROCESS
 # ======================
 if uploaded_file and process_btn:
+    try:
+        path = save_temp(uploaded_file)
 
-    with st.spinner("🔄 Memproses DOCX → XML..."):
+        elements = read_docx(path)
+        questions = run_parser(elements)
+        xml = build_xml(questions)
 
-        try:
-            temp_path = save_temp(uploaded_file)
+        st.session_state.xml_result = xml
 
-            elements = read_docx(temp_path)
-            questions = run_parser(elements)
-            xml = build_xml(questions)
-
-            st.session_state.xml_result = xml
-
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
+    except Exception as e:
+        st.error(str(e))
 
 # ======================
 # RESULT
 # ======================
 if st.session_state.xml_result:
 
-    st.success("✅ Konversi berhasil!")
-
-    original_name = uploaded_file.name
-    base_name = os.path.splitext(original_name)[0]
-    xml_filename = base_name + ".xml"
+    name = os.path.splitext(uploaded_file.name)[0] + ".xml"
 
     st.download_button(
-        label="⬇️ Download XML",
+        "Download XML",
         data=st.session_state.xml_result,
-        file_name=xml_filename,
-        mime="text/xml",
-        use_container_width=True
+        file_name=name,
+        mime="text/xml"
     )
 
-    with st.expander("🔍 Preview XML"):
-        st.code(st.session_state.xml_result[:2000], language="xml")
+    with st.expander("Preview"):
+        st.code(st.session_state.xml_result[:2000])
