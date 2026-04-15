@@ -1,34 +1,51 @@
-class Question:
-    def __init__(self):
-        self.content = []   # semua isi soal
+import string
+
+def finalize(self):
+    lines = [c["text"].strip() for c in self.content if c["text"].strip()]
+
+    # ======================
+    # SAFETY: jika kosong
+    # ======================
+    if not lines:
+        self.question_text = []
         self.choices = []
-        self.answers = []
+        return
 
-    def add_content(self, el):
-        self.content.append(el)
+    # ======================
+    # SPLIT soal vs pilihan
+    # ======================
+    split_index = len(lines)
 
-    def finalize(self):
-        """
-        pisahkan content → soal + pilihan
-        """
-        lines = [c["text"].strip() for c in self.content if c["text"].strip()]
+    for i, line in enumerate(lines):
+        if len(line) < 50:
+            split_index = i
+            break
 
-        # heuristik: baris pendek = pilihan
-        split_index = 0
-        for i, line in enumerate(lines):
-            if len(line) < 50:
-                split_index = i
-                break
+    self.question_text = lines[:split_index]
+    choice_lines = lines[split_index:]
 
-        self.question_text = lines[:split_index]
-        self.choice_texts = lines[split_index:]
-
-        # generate label
-        labels = ["A", "B", "C", "D", "E"]
-
+    # ======================
+    # SAFETY: jika tidak ada pilihan
+    # ======================
+    if not choice_lines:
         self.choices = []
-        for i, c in enumerate(self.choice_texts):
-            self.choices.append({
-                "label": labels[i],
-                "text": c
-            })
+        return
+
+    # ======================
+    # LABEL DINAMIS
+    # ======================
+    labels = list(string.ascii_uppercase)
+
+    self.choices = []
+
+    for i, c in enumerate(choice_lines):
+        # SAFE LABEL
+        if i < len(labels):
+            label = labels[i]
+        else:
+            label = f"X{i}"
+
+        self.choices.append({
+            "label": label,
+            "text": c
+        })
