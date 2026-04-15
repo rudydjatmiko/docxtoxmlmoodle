@@ -17,7 +17,6 @@ def parse(elements):
 
     questions = []
 
-    header = []
     current = None
     current_type = None
 
@@ -30,18 +29,7 @@ def parse(elements):
             continue
 
         # ======================
-        # 1. HEADER
-        # ======================
-        if current_type is None:
-            t = is_type(text)
-            if t:
-                current_type = t
-            else:
-                header.append(text)
-            continue
-
-        # ======================
-        # 2. GANTI TIPE SOAL
+        # DETEKSI TIPE SOAL
         # ======================
         t = is_type(text)
         if t:
@@ -49,11 +37,11 @@ def parse(elements):
             continue
 
         # ======================
-        # 3. SOAL BARU (LEVEL 0)
+        # START SOAL (LEVEL 0)
         # ======================
         if level == 0:
 
-            # simpan soal sebelumnya jika belum tersimpan
+            # jika sebelumnya belum ditutup (edge case)
             if current and current["answers"]:
                 questions.append(current)
 
@@ -68,7 +56,7 @@ def parse(elements):
             continue
 
         # ======================
-        # 4. ANS (AKHIR SOAL)
+        # END SOAL (ANS)
         # ======================
         if text.upper().startswith("ANS"):
 
@@ -80,7 +68,7 @@ def parse(elements):
             continue
 
         # ======================
-        # 5. PILIHAN (KHUSUS MC)
+        # PILIHAN (KHUSUS MC)
         # ======================
         if current_type == "MC" and level == 1:
             if current:
@@ -88,7 +76,7 @@ def parse(elements):
             continue
 
         # ======================
-        # 6. ISI SOAL
+        # ISI SOAL (UMUM)
         # ======================
         if current:
             current["question"].append(text)
