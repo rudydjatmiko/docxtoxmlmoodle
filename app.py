@@ -2,7 +2,7 @@ import sys
 import os
 
 # ======================
-# FIX PATH (WAJIB UNTUK STREAMLIT CLOUD)
+# FIX PATH (WAJIB)
 # ======================
 BASE_DIR = os.path.dirname(__file__)
 sys.path.insert(0, BASE_DIR)
@@ -25,7 +25,7 @@ st.set_page_config(
 )
 
 # ======================
-# STYLE (RINGAN)
+# STYLE
 # ======================
 st.markdown("""
 <style>
@@ -64,13 +64,16 @@ uploaded_file = st.file_uploader(
 # ======================
 # BUTTONS
 # ======================
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     process_btn = st.button("🚀 Proses", use_container_width=True)
 
 with col2:
     reset_btn = st.button("🔄 Reset", use_container_width=True)
+
+with col3:
+    debug_btn = st.button("🔍 Debug DOCX", use_container_width=True)
 
 # ======================
 # RESET
@@ -85,6 +88,42 @@ if reset_btn:
     st.rerun()
 
 # ======================
+# DEBUG DOCX
+# ======================
+if uploaded_file and debug_btn:
+
+    with st.spinner("🔍 Membaca struktur DOCX..."):
+
+        try:
+            temp_path = os.path.join(BASE_DIR, "temp.docx")
+
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.read())
+
+            elements = read_docx(temp_path)
+
+            st.subheader("📄 Hasil Pembacaan DOCX")
+
+            for i, el in enumerate(elements):
+                st.markdown(f"### 🔹 Paragraf {i+1}")
+
+                st.write("Text:")
+                st.code(el.get("text", ""))
+
+                img_count = len(el.get("images", []))
+                st.write(f"Jumlah gambar: {img_count}")
+
+                if img_count > 0:
+                    st.success("✔ Ada gambar di paragraf ini")
+
+                # debug detail (opsional)
+                with st.expander("Detail JSON"):
+                    st.json(el)
+
+        except Exception as e:
+            st.error(f"❌ Error Debug: {str(e)}")
+
+# ======================
 # PROCESS
 # ======================
 if uploaded_file and process_btn:
@@ -92,13 +131,12 @@ if uploaded_file and process_btn:
     with st.spinner("🔄 Memproses file..."):
 
         try:
-            # simpan file sementara
             temp_path = os.path.join(BASE_DIR, "temp.docx")
 
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.read())
 
-            # pipeline
+            # PIPELINE
             elements = read_docx(temp_path)
             questions = run_parser(elements)
             xml = build_xml(questions)
@@ -115,12 +153,11 @@ if st.session_state.xml_result:
 
     st.success("✅ Konversi berhasil!")
 
-    # ===== nama file xml sesuai docx =====
+    # nama file xml sesuai docx
     original_name = uploaded_file.name
     base_name = os.path.splitext(original_name)[0]
     xml_filename = base_name + ".xml"
 
-    # ===== download =====
     st.download_button(
         label="⬇️ Download XML",
         data=st.session_state.xml_result,
@@ -129,6 +166,6 @@ if st.session_state.xml_result:
         use_container_width=True
     )
 
-    # ===== preview (FIX INDENT DI SINI) =====
+    # preview
     with st.expander("🔍 Preview XML"):
         st.code(st.session_state.xml_result[:2000], language="xml")
