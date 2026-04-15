@@ -1,23 +1,46 @@
+import sys
+import os
+
+# ======================
+# FIX IMPORT PATH (WAJIB)
+# ======================
+BASE_DIR = os.path.dirname(__file__)
+
+sys.path.append(BASE_DIR)
+sys.path.append(os.path.join(BASE_DIR, "core"))
+sys.path.append(os.path.join(BASE_DIR, "models"))
+sys.path.append(os.path.join(BASE_DIR, "processors"))
+sys.path.append(os.path.join(BASE_DIR, "utils"))
+
+# ======================
+# IMPORT MODULE
+# ======================
 import streamlit as st
 from core.docx_reader import read_docx
 from parser import run_parser
 from core.builder import build_xml
-import os
 
-st.set_page_config(page_title="DOCX to Moodle XML", layout="centered")
+# ======================
+# PAGE CONFIG
+# ======================
+st.set_page_config(
+    page_title="DOCX to Moodle XML",
+    page_icon="📄",
+    layout="centered"
+)
 
-# =====================
-# STYLE (LIGHTWEIGHT)
-# =====================
+# ======================
+# SIMPLE CSS (RINGAN)
+# ======================
 st.markdown("""
 <style>
-.block {
-    padding: 1.2rem;
+.box {
+    padding: 1rem;
     border-radius: 10px;
-    background-color: #f8f9fa;
-    border: 1px solid #e0e0e0;
+    border: 1px solid #ddd;
+    background-color: #f9f9f9;
 }
-.success-box {
+.success {
     padding: 1rem;
     border-radius: 8px;
     background-color: #e6f4ea;
@@ -26,33 +49,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# =====================
+# ======================
 # TITLE
-# =====================
+# ======================
 st.title("📄 DOCX → Moodle XML Converter")
-st.caption("Convert soal Word ke format XML Moodle (auto MC & multiple response)")
+st.caption("Convert soal Word ke XML Moodle (Auto MC & Multiple Response)")
 
-# =====================
+# ======================
 # SESSION STATE
-# =====================
-if "xml" not in st.session_state:
-    st.session_state.xml = None
+# ======================
+if "xml_result" not in st.session_state:
+    st.session_state.xml_result = None
 
-# =====================
-# FILE UPLOAD
-# =====================
-st.markdown("### 📥 Upload File")
+# ======================
+# UPLOAD
+# ======================
+st.markdown("### 📥 Upload File DOCX")
 
 uploaded_file = st.file_uploader(
-    "Pilih file DOCX",
+    "Pilih file",
     type=["docx"],
     label_visibility="collapsed"
 )
 
-# =====================
-# PROCESS BUTTON
-# =====================
-col1, col2 = st.columns([1,1])
+# ======================
+# BUTTONS
+# ======================
+col1, col2 = st.columns(2)
 
 with col1:
     process_btn = st.button("🚀 Proses", use_container_width=True)
@@ -60,50 +83,59 @@ with col1:
 with col2:
     reset_btn = st.button("🔄 Reset", use_container_width=True)
 
-# =====================
-# RESET LOGIC
-# =====================
+# ======================
+# RESET
+# ======================
 if reset_btn:
-    st.session_state.xml = None
-    if os.path.exists("temp.docx"):
-        os.remove("temp.docx")
+    st.session_state.xml_result = None
+
+    temp_path = os.path.join(BASE_DIR, "temp.docx")
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+
     st.rerun()
 
-# =====================
-# PROCESSING
-# =====================
+# ======================
+# PROCESS
+# ======================
 if uploaded_file and process_btn:
 
     with st.spinner("🔄 Memproses file..."):
 
-        # simpan file sementara
-        with open("temp.docx", "wb") as f:
-            f.write(uploaded_file.read())
-
         try:
-            elements = read_docx("temp.docx")
+            # simpan file sementara
+            temp_path = os.path.join(BASE_DIR, "temp.docx")
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.read())
+
+            # pipeline
+            elements = read_docx(temp_path)
             questions = run_parser(elements)
             xml = build_xml(questions)
 
-            st.session_state.xml = xml
+            st.session_state.xml_result = xml
 
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
 
-# =====================
-# HASIL
-# =====================
-if st.session_state.xml:
+# ======================
+# RESULT
+# ======================
+if st.session_state.xml_result:
 
-    st.markdown('<div class="success-box">✅ Konversi berhasil!</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="success">✅ Konversi berhasil!</div>',
+        unsafe_allow_html=True
+    )
 
     st.download_button(
         label="⬇️ Download XML",
-        data=st.session_state.xml,
-        file_name="result.xml",
+        data=st.session_state.xml_result,
+        file_name="moodle.xml",
         mime="text/xml",
         use_container_width=True
     )
 
+    # preview (debug ringan)
     with st.expander("🔍 Preview XML"):
-        st.code(st.session_state.xml[:2000], language="xml")
+        st.code(st.session_state.xml_result[:2000], language="xml")
