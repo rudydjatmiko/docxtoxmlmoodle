@@ -12,7 +12,6 @@ def read_docx(path):
         images = extract_images_from_paragraph(para, image_map)
 
         elements.append({
-            "type": "text",
             "text": para.text,
             "images": images
         })
