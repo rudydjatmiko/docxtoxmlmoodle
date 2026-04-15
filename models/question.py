@@ -1,4 +1,5 @@
 import string
+import re
 
 class Question:
     def __init__(self):
@@ -9,34 +10,42 @@ class Question:
     def add_content(self, el):
         self.content.append(el)
 
+    def add_choice(self, el):
+        text = el["text"].strip()
+
+        # hapus prefix A. jika ada
+        text = re.sub(r"^[A-D]\.\s*", "", text)
+
+        self.choices.append({
+            "text": text,
+            "images": el.get("images", [])
+        })
+
     def finalize(self):
+        if self.choices:
+            self.question_text = self.content
+            return
+
+        # fallback jika tidak ada numbering
         lines = [c["text"].strip() for c in self.content if c["text"].strip()]
 
-        if not lines:
-            self.choices = []
-            return
+        choice_lines = []
 
-        split_index = len(lines)
-
-        for i, line in enumerate(lines):
-            if len(line) < 50:
-                split_index = i
+        for line in reversed(lines):
+            if len(line.split()) <= 10:
+                choice_lines.insert(0, line)
+            else:
                 break
 
-        self.question_text = lines[:split_index]
-        choice_lines = lines[split_index:]
-
-        if not choice_lines:
-            self.choices = []
-            return
+        question_lines = lines[:-len(choice_lines)]
 
         labels = list(string.ascii_uppercase)
 
         self.choices = []
         for i, c in enumerate(choice_lines):
-            label = labels[i] if i < len(labels) else f"X{i}"
-
             self.choices.append({
-                "label": label,
+                "label": labels[i],
                 "text": c
             })
+
+        self.question_text = question_lines
