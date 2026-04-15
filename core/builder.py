@@ -12,57 +12,47 @@ def build_html(content):
 
 
 def build_xml(questions):
-    xml = ['<?xml version="1.0" encoding="UTF-8"?>']
-    xml.append('<quiz>')
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
     for i, q in enumerate(questions):
+
+        if not q.choices:
+            continue
 
         is_multi = len(q.answers) > 1
 
         xml.append('<question type="multichoice">')
 
-        # NAME
-        xml.append("<name>")
-        xml.append(f"<text>Question {i+1}</text>")
-        xml.append("</name>")
-
-        # QUESTION TEXT
-        xml.append('<questiontext format="html">')
+        xml.append(f"<name><text>Question {i+1}</text></name>")
 
         html = build_html(q.content)
 
+        xml.append('<questiontext format="html">')
         xml.append(f"<text><![CDATA[{html}]]></text>")
 
-        # embed images
         for el in q.content:
             for img in el["images"]:
                 xml.append(f'''
-                <file name="{img["name"]}" encoding="base64">
-                {img["data"]}
-                </file>
-                ''')
+<file name="{img["name"]}" encoding="base64">
+{img["data"]}
+</file>
+''')
 
-        xml.append("</questiontext>")
+        xml.append('</questiontext>')
 
-        # SETTINGS
         xml.append(f"<single>{'false' if is_multi else 'true'}</single>")
         xml.append("<shuffleanswers>true</shuffleanswers>")
 
-        # ANSWERS
         for c in q.choices:
-            if c["label"] in q.answers:
-                fraction = 100
-            else:
-                fraction = 0
+            fraction = 100 if c["label"] in q.answers else 0
 
             xml.append(f'''
-            <answer fraction="{fraction}" format="html">
-                <text><![CDATA[{c["text"]}]]></text>
-            </answer>
-            ''')
+<answer fraction="{fraction}" format="html">
+<text><![CDATA[{c["text"]}]]></text>
+</answer>
+''')
 
-        xml.append("</question>")
+        xml.append('</question>')
 
-    xml.append("</quiz>")
-
+    xml.append('</quiz>')
     return "\n".join(xml)
