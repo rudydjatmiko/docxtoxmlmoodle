@@ -1,16 +1,17 @@
 import string
 
+
 def extract_answer(text):
     raw = text.replace("ANS:", "").strip()
     raw = raw.replace("and", ",")
-    return [x.strip() for x in raw.split(",")]
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
 
 def is_type(text):
-    t = text.upper()
-    if "MULTIPLE CHOICE" in t:
+    t = text.strip().upper()
+    if t == "MULTIPLE CHOICE":
         return "MC"
-    if "ESSAY" in t:
+    if t == "ESSAY":
         return "ESSAY"
     return None
 
@@ -23,61 +24,92 @@ def parse(elements):
     current_type = None
 
     q_counter = 0
-    choice_counter = 0  # 🔥 untuk A, B, C
+    choice_counter = 0
 
     for el in elements:
 
-        text = el["text"].strip()
+        text = el.get("text", "").strip()
         level = el.get("level")
+        has_drawing = el.get("has_drawing", False)
 
-        if not text and not el.get("has_drawing"):
+        if not text and not has_drawing:
             continue
 
         # ======================
-        # DETEKSI TIPE
+        # DETEKSI TIPE SOAL
         # ======================
         t = is_type(text)
         if t:
             current_type = t
+            current = None  # reset soal aktif
             continue
 
         # ======================
-        # START SOAL
+        # ===== ESSAY MODE =====
         # ======================
-        if level == 0 and current is None:
+        if current_type == "ESSAY":
 
-            q_counter += 1
-            choice_counter = 0  # 🔥 reset pilihan
+            # START (level 0 pertama)
+            if current is None:
+                if level == 0:
+                    q_counter += 1
 
-            current = {
-                "number": f"{q_counter:02d}",
-                "type": current_type,
-                "question": [],
-                "choices": [],
-                "answers": []
-            }
+                    current = {
+                        "number": f"{q_counter:02d}",
+                        "type": "ESSAY",
+                        "question": [],
+                        "choices": [],
+                        "answers": []
+                    }
 
+                    current["question"].append(text)
+
+                continue
+
+            # END (ANS)
+            if text.upper().startswith("ANS"):
+                current["answers"] = extract_answer(text)
+                questions.append(current)
+                current = None
+                continue
+
+            # SEMUA MASUK KE SOAL
             current["question"].append(text)
             continue
 
         # ======================
-        # END SOAL
+        # ===== MC MODE =====
         # ======================
-        if text.upper().startswith("ANS"):
+        if current_type == "MC":
 
-            if current:
-                current["answers"] = extract_answer(text)
-                questions.append(current)
-                current = None
+            # START SOAL
+            if level == 0 and current is None:
 
-            continue
+                q_counter += 1
+                choice_counter = 0
 
-        # ======================
-        # PILIHAN (MC)
-        # ======================
-        if current_type == "MC" and level == 1:
+                current = {
+                    "number": f"{q_counter:02d}",
+                    "type": "MC",
+                    "question": [],
+                    "choices": [],
+                    "answers": []
+                }
 
-            if current:
+                current["question"].append(text)
+                continue
+
+            # END SOAL
+            if text.upper().startswith("ANS"):
+                if current:
+                    current["answers"] = extract_answer(text)
+                    questions.append(current)
+                    current = None
+                continue
+
+            # PILIHAN (level 1)
+            if level == 1 and current:
+
                 label = string.ascii_uppercase[choice_counter]
 
                 current["choices"].append({
@@ -86,13 +118,10 @@ def parse(elements):
                 })
 
                 choice_counter += 1
+                continue
 
-            continue
-
-        # ======================
-        # ISI SOAL
-        # ======================
-        if current:
-            current["question"].append(text)
+            # ISI SOAL
+            if current:
+                current["question"].append(text)
 
     return questions
