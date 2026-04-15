@@ -1,41 +1,88 @@
+def build_html(lines):
+    return "<br/>".join(lines)
+
+
 def build_xml(questions):
 
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
-    for i, q in enumerate(questions):
+    for q in questions:
 
-        if not q["choices"]:
-            continue
+        q_text = build_html(q["question"])
 
-        is_multi = len(q["answers"]) > 1
+        # ======================
+        # MULTIPLE CHOICE
+        # ======================
+        if q["type"] == "MC":
 
-        xml.append('<question type="multichoice">')
+            if not q["choices"]:
+                continue
 
-        xml.append(f"<name><text>Question {i+1}</text></name>")
+            is_multi = len(q["answers"]) > 1
 
-        # ===== QUESTION TEXT =====
-        q_html = "<br/>".join(q["question"])
+            xml.append('<question type="multichoice">')
 
-        xml.append('<questiontext format="html">')
-        xml.append(f"<text><![CDATA[{q_html}]]></text>")
-        xml.append('</questiontext>')
+            # NAME
+            xml.append(f"<name><text>Question {q['number']}</text></name>")
 
-        xml.append(f"<single>{'false' if is_multi else 'true'}</single>")
-        xml.append("<shuffleanswers>true</shuffleanswers>")
+            # QUESTION TEXT
+            xml.append('<questiontext format="html">')
+            xml.append(f"<text><![CDATA[{q_text}]]></text>")
+            xml.append('</questiontext>')
 
-        # ===== ANSWERS =====
-        for idx, choice in enumerate(q["choices"]):
+            # SETTINGS
+            xml.append(f"<single>{'false' if is_multi else 'true'}</single>")
+            xml.append("<shuffleanswers>true</shuffleanswers>")
 
-            label = chr(65 + idx)
-            fraction = 100 if label in q["answers"] else 0
+            # ======================
+            # ANSWERS
+            # ======================
+            total_correct = len(q["answers"]) if is_multi else 1
 
-            xml.append(f'''
+            for c in q["choices"]:
+
+                label = c["label"]
+                text = c["text"]
+
+                if label in q["answers"]:
+                    fraction = 100 / total_correct
+                else:
+                    fraction = 0
+
+                xml.append(f"""
 <answer fraction="{fraction}" format="html">
-<text><![CDATA[{choice}]]></text>
+<text><![CDATA[{text}]]></text>
 </answer>
-''')
+""")
 
-        xml.append('</question>')
+            xml.append('</question>')
+
+        # ======================
+        # ESSAY
+        # ======================
+        elif q["type"] == "ESSAY":
+
+            xml.append('<question type="essay">')
+
+            # NAME
+            xml.append(f"<name><text>Question {q['number']}</text></name>")
+
+            # QUESTION TEXT
+            xml.append('<questiontext format="html">')
+            xml.append(f"<text><![CDATA[{q_text}]]></text>")
+            xml.append('</questiontext>')
+
+            # OPTIONAL: jawabannya (jika ada)
+            if q["answers"]:
+                ans_text = "<br/>".join(q["answers"])
+
+                xml.append(f"""
+<generalfeedback format="html">
+<text><![CDATA[{ans_text}]]></text>
+</generalfeedback>
+""")
+
+            xml.append('</question>')
 
     xml.append('</quiz>')
 
