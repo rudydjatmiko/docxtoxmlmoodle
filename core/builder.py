@@ -1,41 +1,68 @@
-from utils.text import wrap_arabic
+def build_html(content):
+    html = ""
+
+    for el in content:
+        if el["text"]:
+            html += f"<p>{el['text']}</p>"
+
+        for img in el["images"]:
+            html += f'<img src="@@PLUGINFILE@@/{img["name"]}"/><br>'
+
+    return html
 
 
-def build_xml(questions, image_handler=None):
+def build_xml(questions):
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>']
+    xml.append('<quiz>')
 
-    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
+    for i, q in enumerate(questions):
 
-    for i, q in enumerate(questions, start=1):
+        is_multi = len(q.answers) > 1
 
         xml.append('<question type="multichoice">')
-        xml.append(f'<name><text>Soal {i:02d}</text></name>')
 
-        # ===== TEXT =====
+        # NAME
+        xml.append("<name>")
+        xml.append(f"<text>Question {i+1}</text>")
+        xml.append("</name>")
+
+        # QUESTION TEXT
         xml.append('<questiontext format="html">')
-        xml.append(f'<text><![CDATA[{wrap_arabic(q.text)}]]></text>')
-        xml.append('</questiontext>')
 
-        # ===== MODE =====
-        is_multi = len(q.correct) > 1
-        xml.append(f'<single>{"false" if is_multi else "true"}</single>')
-        xml.append('<shuffleanswers>true</shuffleanswers>')
-        xml.append('<answernumbering>abc</answernumbering>')
+        html = build_html(q.content)
 
-        # ===== OPTIONS =====
-        for idx, opt in enumerate(q.options):
-            label = chr(65 + idx)
+        xml.append(f"<text><![CDATA[{html}]]></text>")
 
-            if is_multi:
-                frac = 100 / len(q.correct) if label in q.correct else 0
+        # embed images
+        for el in q.content:
+            for img in el["images"]:
+                xml.append(f'''
+                <file name="{img["name"]}" encoding="base64">
+                {img["data"]}
+                </file>
+                ''')
+
+        xml.append("</questiontext>")
+
+        # SETTINGS
+        xml.append(f"<single>{'false' if is_multi else 'true'}</single>")
+        xml.append("<shuffleanswers>true</shuffleanswers>")
+
+        # ANSWERS
+        for c in q.choices:
+            if c["label"] in q.answers:
+                fraction = 100
             else:
-                frac = 100 if label in q.correct else 0
+                fraction = 0
 
-            xml.append(f'<answer fraction="{frac}" format="html">')
-            xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
-            xml.append('</answer>')
+            xml.append(f'''
+            <answer fraction="{fraction}" format="html">
+                <text><![CDATA[{c["text"]}]]></text>
+            </answer>
+            ''')
 
-        xml.append('</question>')
+        xml.append("</question>")
 
-    xml.append('</quiz>')
+    xml.append("</quiz>")
 
     return "\n".join(xml)
