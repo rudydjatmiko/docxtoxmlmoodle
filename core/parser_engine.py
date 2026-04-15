@@ -1,4 +1,4 @@
-from docxtoxmlmoodle.models.question import Question
+from models.question import Question
 
 def is_ans(text):
     return text.strip().startswith("ANS:")
