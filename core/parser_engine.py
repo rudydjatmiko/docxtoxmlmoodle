@@ -1,7 +1,4 @@
-from models.question import Question
-
-def is_ans(text):
-    return text.strip().startswith("ANS:")
+import re
 
 def extract_answer(text):
     raw = text.replace("ANS:", "").strip()
@@ -9,41 +6,40 @@ def extract_answer(text):
     return [x.strip() for x in raw.split(",")]
 
 def parse(elements):
+
     questions = []
-    current = Question()
+    current = {
+        "question": [],
+        "choices": [],
+        "answers": []
+    }
 
     for el in elements:
+
         text = el["text"].strip()
-        num = el.get("numbering")
+        level = el["level"]
 
-        if not text and not el.get("has_drawing"):
+        if not text and not el["has_drawing"]:
             continue
 
-        # ======================
-        # DETEKSI JAWABAN
-        # ======================
-        if is_ans(text):
-            current.answers = extract_answer(text)
-            current.finalize()
+        # ===== ANSWER =====
+        if text.upper().startswith("ANS"):
+            current["answers"] = extract_answer(text)
             questions.append(current)
-            current = Question()
+
+            current = {
+                "question": [],
+                "choices": [],
+                "answers": []
+            }
             continue
 
-        # ======================
-        # DETEKSI PILIHAN (LEVEL 1)
-        # ======================
-        if num and num.get("level") == 1:
-            current.add_choice(el)
+        # ===== CHOICE =====
+        if level == 1:
+            current["choices"].append(text)
             continue
 
-        # ======================
-        # DETEKSI SOAL (LEVEL 0)
-        # ======================
-        if num and num.get("level") == 0:
-            if current.content:
-                questions.append(current)
-                current = Question()
-
-        current.add_content(el)
+        # ===== QUESTION =====
+        current["question"].append(text)
 
     return questions
