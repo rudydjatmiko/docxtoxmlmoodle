@@ -1,3 +1,5 @@
+import string
+
 def extract_answer(text):
     raw = text.replace("ANS:", "").strip()
     raw = raw.replace("and", ",")
@@ -20,6 +22,9 @@ def parse(elements):
     current = None
     current_type = None
 
+    q_counter = 0
+    choice_counter = 0  # 🔥 untuk A, B, C
+
     for el in elements:
 
         text = el["text"].strip()
@@ -29,7 +34,7 @@ def parse(elements):
             continue
 
         # ======================
-        # DETEKSI TIPE SOAL
+        # DETEKSI TIPE
         # ======================
         t = is_type(text)
         if t:
@@ -37,15 +42,15 @@ def parse(elements):
             continue
 
         # ======================
-        # START SOAL (LEVEL 0)
+        # START SOAL
         # ======================
-        if level == 0:
+        if level == 0 and current is None:
 
-            # jika sebelumnya belum ditutup (edge case)
-            if current and current["answers"]:
-                questions.append(current)
+            q_counter += 1
+            choice_counter = 0  # 🔥 reset pilihan
 
             current = {
+                "number": f"{q_counter:02d}",
                 "type": current_type,
                 "question": [],
                 "choices": [],
@@ -56,7 +61,7 @@ def parse(elements):
             continue
 
         # ======================
-        # END SOAL (ANS)
+        # END SOAL
         # ======================
         if text.upper().startswith("ANS"):
 
@@ -68,15 +73,24 @@ def parse(elements):
             continue
 
         # ======================
-        # PILIHAN (KHUSUS MC)
+        # PILIHAN (MC)
         # ======================
         if current_type == "MC" and level == 1:
+
             if current:
-                current["choices"].append(text)
+                label = string.ascii_uppercase[choice_counter]
+
+                current["choices"].append({
+                    "label": label,
+                    "text": text
+                })
+
+                choice_counter += 1
+
             continue
 
         # ======================
-        # ISI SOAL (UMUM)
+        # ISI SOAL
         # ======================
         if current:
             current["question"].append(text)
