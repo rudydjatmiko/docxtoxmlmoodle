@@ -1,24 +1,18 @@
-def get_xml_info(paragraph):
-    p = paragraph._element
+def get_xml_info(p, ns):
+    # ===== TEXT =====
+    texts = p.findall(".//w:t", namespaces=ns)
+    text = "".join([t.text for t in texts if t.text]).strip()
 
-    # ======================
-    # NUMBERING (w:numPr)
-    # ======================
-    numPr = p.find('.//w:numPr', namespaces=p.nsmap)
+    # ===== NUMBERING =====
+    numPr = p.find('.//w:numPr', namespaces=ns)
+    level = None
 
-    numbering = None
     if numPr is not None:
-        ilvl = numPr.find('.//w:ilvl', namespaces=p.nsmap)
-        numId = numPr.find('.//w:numId', namespaces=p.nsmap)
+        ilvl = numPr.find('.//w:ilvl', namespaces=ns)
+        if ilvl is not None:
+            level = int(ilvl.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val'))
 
-        numbering = {
-            "level": int(ilvl.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')) if ilvl is not None else None,
-            "numId": numId.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') if numId is not None else None
-        }
+    # ===== DRAWING =====
+    has_drawing = bool(p.findall(".//w:drawing", namespaces=ns))
 
-    # ======================
-    # DRAWING (w:drawing)
-    # ======================
-    has_drawing = bool(p.xpath('.//w:drawing'))
-
-    return numbering, has_drawing
+    return text, level, has_drawing
