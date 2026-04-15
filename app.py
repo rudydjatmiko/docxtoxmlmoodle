@@ -11,6 +11,7 @@ sys.path.insert(0, BASE_DIR)
 # IMPORT
 # ======================
 import streamlit as st
+from docx import Document
 from core.docx_reader import read_docx
 from parser import run_parser
 from core.builder import build_xml
@@ -25,24 +26,10 @@ st.set_page_config(
 )
 
 # ======================
-# STYLE
-# ======================
-st.markdown("""
-<style>
-.block {
-    padding: 1rem;
-    border-radius: 10px;
-    background-color: #f8f9fa;
-    border: 1px solid #ddd;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ======================
 # TITLE
 # ======================
 st.title("📄 DOCX → Moodle XML Converter")
-st.caption("Convert soal Word ke XML Moodle (Auto MC & Multiple Response)")
+st.caption("Convert soal Word ke XML Moodle + Debug Tools")
 
 # ======================
 # SESSION STATE
@@ -64,7 +51,7 @@ uploaded_file = st.file_uploader(
 # ======================
 # BUTTONS
 # ======================
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     process_btn = st.button("🚀 Proses", use_container_width=True)
@@ -73,7 +60,10 @@ with col2:
     reset_btn = st.button("🔄 Reset", use_container_width=True)
 
 with col3:
-    debug_btn = st.button("🔍 Debug DOCX", use_container_width=True)
+    debug_raw_btn = st.button("📄 RAW", use_container_width=True)
+
+with col4:
+    debug_lines_btn = st.button("🔍 Baris", use_container_width=True)
 
 # ======================
 # RESET
@@ -88,37 +78,76 @@ if reset_btn:
     st.rerun()
 
 # ======================
-# DEBUG DOCX
+# SIMPAN FILE TEMP
 # ======================
-if uploaded_file and debug_btn:
+def save_temp(uploaded_file):
+    temp_path = os.path.join(BASE_DIR, "temp.docx")
+    with open(temp_path, "wb") as f:
+        f.write(uploaded_file.read())
+    return temp_path
 
-    with st.spinner("🔍 Membaca struktur DOCX..."):
+# ======================
+# DEBUG RAW (ASLI)
+# ======================
+if uploaded_file and debug_raw_btn:
+
+    with st.spinner("🔍 Membaca RAW DOCX..."):
 
         try:
-            temp_path = os.path.join(BASE_DIR, "temp.docx")
+            temp_path = save_temp(uploaded_file)
+            doc = Document(temp_path)
 
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.read())
+            st.subheader("📄 RAW TEXT (ASLI DOCX)")
 
+            raw_lines = []
+
+            for para in doc.paragraphs:
+                text = para.text if para.text else "[KOSONG]"
+                raw_lines.append(text)
+
+            st.code("\n".join(raw_lines))
+
+        except Exception as e:
+            st.error(f"❌ Error RAW: {str(e)}")
+
+# ======================
+# DEBUG BARIS (HASIL READER)
+# ======================
+if uploaded_file and debug_lines_btn:
+
+    with st.spinner("🔍 Membaca struktur baris..."):
+
+        try:
+            temp_path = save_temp(uploaded_file)
             elements = read_docx(temp_path)
 
-            st.subheader("📄 Hasil Pembacaan DOCX")
+            st.subheader("📄 Semua Baris (Processed Elements)")
+
+            lines = []
 
             for i, el in enumerate(elements):
-                st.markdown(f"### 🔹 Paragraf {i+1}")
-
-                st.write("Text:")
-                st.code(el.get("text", ""))
-
+                text = el.get("text", "").strip()
                 img_count = len(el.get("images", []))
-                st.write(f"Jumlah gambar: {img_count}")
+
+                if not text:
+                    text = "[KOSONG]"
+
+                line = f"{i+1:03d} | {text}"
 
                 if img_count > 0:
-                    st.success("✔ Ada gambar di paragraf ini")
+                    line += f"  🖼️({img_count})"
 
-                # debug detail (opsional)
-                with st.expander("Detail JSON"):
-                    st.json(el)
+                # highlight ANS
+                if "ANS:" in text:
+                    line = "🔑 " + line
+
+                # highlight kemungkinan pilihan
+                elif len(text.split()) <= 4:
+                    line = "👉 " + line
+
+                lines.append(line)
+
+            st.code("\n".join(lines))
 
         except Exception as e:
             st.error(f"❌ Error Debug: {str(e)}")
@@ -128,15 +157,11 @@ if uploaded_file and debug_btn:
 # ======================
 if uploaded_file and process_btn:
 
-    with st.spinner("🔄 Memproses file..."):
+    with st.spinner("🔄 Memproses DOCX → XML..."):
 
         try:
-            temp_path = os.path.join(BASE_DIR, "temp.docx")
+            temp_path = save_temp(uploaded_file)
 
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.read())
-
-            # PIPELINE
             elements = read_docx(temp_path)
             questions = run_parser(elements)
             xml = build_xml(questions)
@@ -153,7 +178,7 @@ if st.session_state.xml_result:
 
     st.success("✅ Konversi berhasil!")
 
-    # nama file xml sesuai docx
+    # nama file sesuai docx
     original_name = uploaded_file.name
     base_name = os.path.splitext(original_name)[0]
     xml_filename = base_name + ".xml"
@@ -166,6 +191,5 @@ if st.session_state.xml_result:
         use_container_width=True
     )
 
-    # preview
     with st.expander("🔍 Preview XML"):
         st.code(st.session_state.xml_result[:2000], language="xml")
