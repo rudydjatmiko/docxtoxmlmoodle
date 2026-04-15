@@ -1,9 +1,6 @@
 import base64
 
 def get_image_map(doc):
-    """
-    mapping rId → image part
-    """
     rels = doc.part._rels
     image_map = {}
 
@@ -16,12 +13,8 @@ def get_image_map(doc):
 
 
 def extract_images_from_paragraph(paragraph, image_map):
-    """
-    extract image dari 1 paragraf
-    """
     images = []
 
-    # cari semua embed rId
     blips = paragraph._element.xpath('.//a:blip')
 
     for blip in blips:
