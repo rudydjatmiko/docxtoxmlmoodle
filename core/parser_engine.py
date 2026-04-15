@@ -1,4 +1,4 @@
-from ..models.question import Question
+from models.question import Question
 
 def is_ans(text):
     return text.strip().startswith("ANS:")
@@ -20,7 +20,6 @@ def parse(elements):
         if is_ans(text):
             current.answers = extract_answer(text)
             current.finalize()
-
             questions.append(current)
             current = Question()
             continue
