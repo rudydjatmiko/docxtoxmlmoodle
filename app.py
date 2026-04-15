@@ -75,12 +75,16 @@ if uploaded_file and process_btn:
 if st.session_state.xml_result:
     st.success("✅ Selesai!")
 
-    st.download_button(
-        "⬇️ Download XML",
-        data=st.session_state.xml_result,
-        file_name="moodle.xml",
-        mime="text/xml"
-    )
+   # ambil nama file tanpa ekstensi
+original_name = uploaded_file.name
+xml_filename = original_name.replace(".docx", ".xml")
+
+st.download_button(
+    "⬇️ Download XML",
+    data=st.session_state.xml_result,
+    file_name=xml_filename,
+    mime="text/xml"
+)
 
     with st.expander("Preview"):
         st.code(st.session_state.xml_result[:2000], language="xml")
