@@ -1,25 +1,25 @@
-import re
-
 def extract_answer(text):
     raw = text.replace("ANS:", "").strip()
     raw = raw.replace("and", ",")
     return [x.strip() for x in raw.split(",")]
 
 
-def is_short(text):
-    return len(text.split()) <= 12
+def is_type(text):
+    t = text.upper()
+    if "MULTIPLE CHOICE" in t:
+        return "MC"
+    if "ESSAY" in t:
+        return "ESSAY"
+    return None
 
 
 def parse(elements):
 
     questions = []
-    current = {
-        "question": [],
-        "choices": [],
-        "answers": []
-    }
 
-    buffer = []
+    header = []
+    current = None
+    current_type = None
 
     for el in elements:
 
@@ -29,42 +29,68 @@ def parse(elements):
         if not text and not el.get("has_drawing"):
             continue
 
-        # ===== ANSWER (END OF QUESTION)
-        if text.upper().startswith("ANS"):
-            current["answers"] = extract_answer(text)
+        # ======================
+        # 1. HEADER
+        # ======================
+        if current_type is None:
+            t = is_type(text)
+            if t:
+                current_type = t
+            else:
+                header.append(text)
+            continue
 
-            # 🔥 SPLIT QUESTION vs CHOICES (fallback)
-            if not current["choices"]:
+        # ======================
+        # 2. GANTI TIPE SOAL
+        # ======================
+        t = is_type(text)
+        if t:
+            current_type = t
+            continue
 
-                choices = []
+        # ======================
+        # 3. SOAL BARU (LEVEL 0)
+        # ======================
+        if level == 0:
 
-                for line in reversed(current["question"]):
-                    if is_short(line):
-                        choices.insert(0, line)
-                    else:
-                        break
-
-                q_len = len(current["question"]) - len(choices)
-
-                current["choices"] = choices
-                current["question"] = current["question"][:q_len]
-
-            questions.append(current)
+            # simpan soal sebelumnya jika belum tersimpan
+            if current and current["answers"]:
+                questions.append(current)
 
             current = {
+                "type": current_type,
                 "question": [],
                 "choices": [],
                 "answers": []
             }
 
+            current["question"].append(text)
             continue
 
-        # ===== CHOICE BY LEVEL
-        if level == 1:
-            current["choices"].append(text)
+        # ======================
+        # 4. ANS (AKHIR SOAL)
+        # ======================
+        if text.upper().startswith("ANS"):
+
+            if current:
+                current["answers"] = extract_answer(text)
+                questions.append(current)
+                current = None
+
             continue
 
-        # ===== DEFAULT MASUK KE QUESTION
-        current["question"].append(text)
+        # ======================
+        # 5. PILIHAN (KHUSUS MC)
+        # ======================
+        if current_type == "MC" and level == 1:
+            if current:
+                current["choices"].append(text)
+            continue
+
+        # ======================
+        # 6. ISI SOAL
+        # ======================
+        if current:
+            current["question"].append(text)
 
     return questions
