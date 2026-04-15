@@ -16,6 +16,10 @@ def is_type(text):
     return None
 
 
+def is_short(text):
+    return len(text.split()) <= 10
+
+
 def parse(elements):
 
     questions = []
@@ -36,54 +40,55 @@ def parse(elements):
             continue
 
         # ======================
-        # DETEKSI TIPE SOAL
+        # DETEKSI TIPE
         # ======================
         t = is_type(text)
         if t:
             current_type = t
-            current = None  # reset soal aktif
+            current = None
             continue
 
         # ======================
-        # ===== ESSAY MODE =====
+        # ===== ESSAY =====
         # ======================
         if current_type == "ESSAY":
 
-            # START (level 0 pertama)
-            if current is None:
-                if level == 0:
-                    q_counter += 1
+            # START (hanya sekali)
+            if current is None and (level == 0 or level is None):
+                q_counter += 1
 
-                    current = {
-                        "number": f"{q_counter:02d}",
-                        "type": "ESSAY",
-                        "question": [],
-                        "choices": [],
-                        "answers": []
-                    }
+                current = {
+                    "number": f"{q_counter:02d}",
+                    "type": "ESSAY",
+                    "question": [],
+                    "choices": [],
+                    "answers": []
+                }
 
-                    current["question"].append(text)
-
+                current["question"].append(text)
                 continue
 
-            # END (ANS)
+            # END
             if text.upper().startswith("ANS"):
-                current["answers"] = extract_answer(text)
-                questions.append(current)
-                current = None
+                if current:
+                    current["answers"] = []
+                    questions.append(current)
+                    current = None
                 continue
 
-            # SEMUA MASUK KE SOAL
-            current["question"].append(text)
+            # isi
+            if current:
+                current["question"].append(text)
+
             continue
 
         # ======================
-        # ===== MC MODE =====
+        # ===== MC =====
         # ======================
         if current_type == "MC":
 
-            # START SOAL
-            if level == 0 and current is None:
+            # START (fleksibel)
+            if current is None and (level == 0 or level is None):
 
                 q_counter += 1
                 choice_counter = 0
@@ -99,15 +104,33 @@ def parse(elements):
                 current["question"].append(text)
                 continue
 
-            # END SOAL
+            # END
             if text.upper().startswith("ANS"):
                 if current:
                     current["answers"] = extract_answer(text)
+
+                    # fallback: kalau pilihan kosong
+                    if not current["choices"]:
+                        temp = []
+
+                        for line in reversed(current["question"]):
+                            if is_short(line):
+                                temp.insert(0, line)
+                            else:
+                                break
+
+                        q_len = len(current["question"]) - len(temp)
+                        current["choices"] = [
+                            {"label": string.ascii_uppercase[i], "text": c}
+                            for i, c in enumerate(temp)
+                        ]
+                        current["question"] = current["question"][:q_len]
+
                     questions.append(current)
                     current = None
                 continue
 
-            # PILIHAN (level 1)
+            # PILIHAN (level benar)
             if level == 1 and current:
 
                 label = string.ascii_uppercase[choice_counter]
@@ -120,7 +143,12 @@ def parse(elements):
                 choice_counter += 1
                 continue
 
-            # ISI SOAL
+            # fallback pilihan (tanpa level)
+            if current and not current["choices"] and is_short(text):
+                # kemungkinan pilihan
+                pass
+
+            # isi soal
             if current:
                 current["question"].append(text)
 
