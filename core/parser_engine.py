@@ -5,6 +5,7 @@ def is_ans(text):
 
 def extract_answer(text):
     raw = text.replace("ANS:", "").strip()
+    raw = raw.replace("and", ",")
     return [x.strip() for x in raw.split(",")]
 
 def parse(elements):
@@ -13,16 +14,35 @@ def parse(elements):
 
     for el in elements:
         text = el["text"].strip()
+        num = el.get("numbering")
 
-        if not text:
+        if not text and not el.get("has_drawing"):
             continue
 
+        # ======================
+        # DETEKSI JAWABAN
+        # ======================
         if is_ans(text):
             current.answers = extract_answer(text)
             current.finalize()
             questions.append(current)
             current = Question()
             continue
+
+        # ======================
+        # DETEKSI PILIHAN (LEVEL 1)
+        # ======================
+        if num and num.get("level") == 1:
+            current.add_choice(el)
+            continue
+
+        # ======================
+        # DETEKSI SOAL (LEVEL 0)
+        # ======================
+        if num and num.get("level") == 0:
+            if current.content:
+                questions.append(current)
+                current = Question()
 
         current.add_content(el)
 
