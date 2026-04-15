@@ -2,7 +2,7 @@ import sys
 import os
 
 # ======================
-# FIX PATH (KUNCI UTAMA)
+# FIX PATH (WAJIB UNTUK STREAMLIT CLOUD)
 # ======================
 BASE_DIR = os.path.dirname(__file__)
 sys.path.insert(0, BASE_DIR)
@@ -18,13 +18,34 @@ from core.builder import build_xml
 # ======================
 # CONFIG
 # ======================
-st.set_page_config(page_title="DOCX to Moodle XML", layout="centered")
-
-st.title("📄 DOCX → Moodle XML Converter")
-st.caption("Convert soal Word ke XML Moodle")
+st.set_page_config(
+    page_title="DOCX to Moodle XML",
+    page_icon="📄",
+    layout="centered"
+)
 
 # ======================
-# STATE
+# STYLE (RINGAN)
+# ======================
+st.markdown("""
+<style>
+.block {
+    padding: 1rem;
+    border-radius: 10px;
+    background-color: #f8f9fa;
+    border: 1px solid #ddd;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ======================
+# TITLE
+# ======================
+st.title("📄 DOCX → Moodle XML Converter")
+st.caption("Convert soal Word ke XML Moodle (Auto MC & Multiple Response)")
+
+# ======================
+# SESSION STATE
 # ======================
 if "xml_result" not in st.session_state:
     st.session_state.xml_result = None
@@ -32,34 +53,52 @@ if "xml_result" not in st.session_state:
 # ======================
 # UPLOAD
 # ======================
-uploaded_file = st.file_uploader("Upload DOCX", type=["docx"])
+st.markdown("### 📥 Upload File DOCX")
 
+uploaded_file = st.file_uploader(
+    "Upload file",
+    type=["docx"],
+    label_visibility="collapsed"
+)
+
+# ======================
+# BUTTONS
+# ======================
 col1, col2 = st.columns(2)
 
-process_btn = col1.button("🚀 Proses", use_container_width=True)
-reset_btn = col2.button("🔄 Reset", use_container_width=True)
+with col1:
+    process_btn = st.button("🚀 Proses", use_container_width=True)
+
+with col2:
+    reset_btn = st.button("🔄 Reset", use_container_width=True)
 
 # ======================
 # RESET
 # ======================
 if reset_btn:
     st.session_state.xml_result = None
+
     temp_path = os.path.join(BASE_DIR, "temp.docx")
     if os.path.exists(temp_path):
         os.remove(temp_path)
+
     st.rerun()
 
 # ======================
 # PROCESS
 # ======================
 if uploaded_file and process_btn:
-    with st.spinner("Processing..."):
+
+    with st.spinner("🔄 Memproses file..."):
+
         try:
+            # simpan file sementara
             temp_path = os.path.join(BASE_DIR, "temp.docx")
 
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.read())
 
+            # pipeline
             elements = read_docx(temp_path)
             questions = run_parser(elements)
             xml = build_xml(questions)
@@ -67,24 +106,29 @@ if uploaded_file and process_btn:
             st.session_state.xml_result = xml
 
         except Exception as e:
-            st.error(str(e))
+            st.error(f"❌ Error: {str(e)}")
 
 # ======================
 # RESULT
 # ======================
 if st.session_state.xml_result:
-    st.success("✅ Selesai!")
 
-   # ambil nama file tanpa ekstensi
-original_name = uploaded_file.name
-xml_filename = original_name.replace(".docx", ".xml")
+    st.success("✅ Konversi berhasil!")
 
-st.download_button(
-    "⬇️ Download XML",
-    data=st.session_state.xml_result,
-    file_name=xml_filename,
-    mime="text/xml"
-)
+    # ===== nama file xml sesuai docx =====
+    original_name = uploaded_file.name
+    base_name = os.path.splitext(original_name)[0]
+    xml_filename = base_name + ".xml"
 
-    with st.expander("Preview"):
+    # ===== download =====
+    st.download_button(
+        label="⬇️ Download XML",
+        data=st.session_state.xml_result,
+        file_name=xml_filename,
+        mime="text/xml",
+        use_container_width=True
+    )
+
+    # ===== preview (FIX INDENT DI SINI) =====
+    with st.expander("🔍 Preview XML"):
         st.code(st.session_state.xml_result[:2000], language="xml")
