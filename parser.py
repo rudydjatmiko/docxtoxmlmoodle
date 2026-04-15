@@ -1,104 +1,45 @@
 import re
-import base64
-import uuid
-from docx import Document
-import xml.etree.ElementTree as ET
+from docx2python import docx2python
+from utils import wrap_arabic
 
-
-# =========================
-# CLEAN TEXT
-# =========================
-def clean_text(text):
-    return text.strip().replace("  ", " ")
-
+from image_handler import (
+    extract_images,
+    replace_image_placeholder,
+    append_images_to_xml
+)
 
 # =========================
-# FORMAT HTML (KUNCI UTAMA)
+# REGEX
 # =========================
-def format_html(lines):
-    html = ""
-    in_list = False
-
-    for line in lines:
-        line = clean_text(line)
-
-        # LIST: 1) 2) 3)
-        if re.match(r'^\d+\)', line):
-            if not in_list:
-                html += "<ul>"
-                in_list = True
-            html += f"<li>{line}</li>"
-
-        else:
-            if in_list:
-                html += "</ul>"
-                in_list = False
-            html += f"<p>{line}</p>"
-
-    if in_list:
-        html += "</ul>"
-
-    return html
+RE_QUESTION = re.compile(r'^\d+')
+RE_OPTION = re.compile(r'^\(?([A-Da-d])[\.\)]')
+RE_ANS = re.compile(r'\bANS\b', re.IGNORECASE)
 
 
-# =========================
-# CLEAN OPTION
-# =========================
-def clean_option(text):
-    return re.sub(r'^[A-D][\.\)]\s*', '', text).strip()
-
-
-# =========================
-# ANSWER KEY
-# =========================
-def extract_answer_key(text):
-    if "ANS:" in text.upper():
-        ans = text.upper().split("ANS:")[1].strip()
-        return [a.strip() for a in ans.split(",")]
-    return []
-
-
-# =========================
-# IMAGE HANDLER
-# =========================
-def extract_image_from_run(run):
-    if 'graphic' not in run._element.xml:
-        return None
-
-    try:
-        blips = run._element.xpath('.//a:blip')
-        if not blips:
-            return None
-
-        embed = blips[0].get(
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
-        )
-
-        image_part = run.part.related_parts[embed]
-        image_bytes = image_part.blob
-
-        filename = f"{uuid.uuid4().hex}.jpg"
-        encoded = base64.b64encode(image_bytes).decode("utf-8")
-
-        return {"name": filename, "data": encoded}
-
-    except:
-        return None
+def normalize(text):
+    return re.sub(r'\s+', '', text).upper()
 
 
 # =========================
 # MAIN PARSER
 # =========================
-def parse_docx_to_moodle(file, moodle_type="multichoice"):
+def parse_docx_to_moodle(file, moodle_version="4.x"):
 
-    doc = Document(file)
-    quiz = ET.Element("quiz")
+    logs = []
 
-    questions = []
+    # ===== READ TEXT =====
+    file.seek(0)
+    doc = docx2python(file)
+    lines = [l.strip() for l in doc.text.split('\n') if l.strip()]
 
-    buffer_lines = []
-    buffer_images = []
-    correct_answers = []
+    # ===== READ IMAGES =====
+    file.seek(0)
+    image_map, image_data = extract_images(file)
+    file.seek(0)
+
+    logs.append(f"Images detected: {len(image_data)}")
+
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 
     stats = {
         "MULTIPLE CHOICE": 0,
@@ -106,109 +47,181 @@ def parse_docx_to_moodle(file, moodle_type="multichoice"):
         "ESSAY": 0
     }
 
-    for para in doc.paragraphs:
+    mode = "MC"
+    q_text = ""
+    options = []
+    ans = ""
+    q_num = 1
 
-        text = para.text.strip()
-        if not text:
+    i = 0
+
+    # =========================
+    # LOOP
+    # =========================
+    while i < len(lines):
+
+        line = lines[i]
+        norm = normalize(line)
+
+        # ===== TIPE SOAL =====
+        if norm == "MULTIPLECHOICE":
+            mode = "MC"
+            i += 1
             continue
 
-        # IMAGE
-        for run in para.runs:
-            img = extract_image_from_run(run)
-            if img:
-                buffer_images.append(img)
+        if norm == "ESSAY":
+            mode = "ESSAY"
+            q_text = ""
+            i += 1
+            continue
 
-        # END OF QUESTION
-        if "ANS:" in text.upper():
+        # ===== JAWABAN =====
+        if RE_ANS.search(line):
 
-            correct_answers = extract_answer_key(text)
+            match = re.search(r'ANS\s*[:\-]?\s*(.*)', line, re.IGNORECASE)
+            ans = match.group(1) if match else ""
 
-            # SPLIT
-            if len(buffer_lines) >= 4:
-                question_text = buffer_lines[:-4]
-                options = buffer_lines[-4:]
+            if mode == "ESSAY":
+                build_essay(
+                    xml, stats, q_text, ans, q_num,
+                    image_map, image_data
+                )
             else:
-                question_text = buffer_lines
-                options = []
+                build_mc(
+                    xml, stats, q_text, options, ans, q_num,
+                    image_map, image_data, moodle_version
+                )
 
-            options = [clean_option(o) for o in options]
+            q_num += 1
+            q_text = ""
+            options = []
+            ans = ""
 
-            questions.append({
-                "text_lines": question_text,
-                "answers": options,
-                "images": buffer_images,
-                "correct": correct_answers
-            })
-
-            buffer_lines = []
-            buffer_images = []
-            correct_answers = []
-
+            i += 1
             continue
 
-        buffer_lines.append(text)
+        # ===== ESSAY =====
+        if mode == "ESSAY":
+            q_text += "<br/>" + line
+            i += 1
+            continue
 
-    # =========================
-    # BUILD XML
-    # =========================
-    for i, q in enumerate(questions):
+        # ===== NOMOR SOAL =====
+        if RE_QUESTION.match(line):
+            q_text = re.sub(r'^\d+[\.\)]?\s*', '', line)
+            options = []
+            ans = ""
+            i += 1
+            continue
 
-        if len(q["answers"]) == 0:
-            qtype = "essay"
-            stats["ESSAY"] += 1
+        # ===== OPSI =====
+        if RE_OPTION.match(line):
+            opt = re.sub(r'^\(?[A-Da-d][\.\)]\s*', '', line)
+            options.append(opt)
+            i += 1
+            continue
 
-        elif len(q["correct"]) > 1:
-            qtype = "multichoiceset"
-            stats["MULTIPLE CHOICE SET"] += 1
-
+        # ===== LANJUTAN =====
+        if options:
+            options[-1] += "<br/>" + line
         else:
-            qtype = "multichoice"
-            stats["MULTIPLE CHOICE"] += 1
+            q_text += "<br/>" + line
 
-        question = ET.SubElement(quiz, "question", type=qtype)
+        i += 1
 
-        # NAME
-        name = ET.SubElement(question, "name")
-        ET.SubElement(name, "text").text = f"Soal {i+1:02d}"
+    xml.append('</quiz>')
 
-        # QUESTION TEXT
-        qtext = ET.SubElement(question, "questiontext", format="html")
-        text_el = ET.SubElement(qtext, "text")
+    return "\n".join(xml), stats, logs, "Converted"
 
-        # 🔥 FORMAT HTML (FIX UTAMA)
-        html = format_html(q["text_lines"])
 
-        # IMAGE
-        for img in q["images"]:
-            html += f'<p><img src="@@PLUGINFILE@@/{img["name"]}"/></p>'
+# =========================
+# BUILD MC
+# =========================
+def build_mc(xml, stats, q_text, options, ans, q_num,
+             image_map, image_data, moodle_version):
 
-        text_el.text = f"<![CDATA[{html}]]>"
+    used_images = {}
 
-        # FILE IMAGE
-        for img in q["images"]:
-            file_el = ET.SubElement(qtext, "file", name=img["name"], encoding="base64")
-            file_el.text = img["data"]
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
 
-        # =========================
-        # ANSWER
-        # =========================
-        if qtype != "essay":
+    correct = re.findall(r'[A-D]', ans.upper())
+    is_multi = len(correct) > 1
 
-            single = ET.SubElement(question, "single")
-            single.text = "false" if qtype == "multichoiceset" else "true"
+    # ===== TIPE SOAL =====
+    if moodle_version.startswith("3"):
+        qtype = "multichoiceset" if is_multi else "multichoice"
+    else:
+        qtype = "multichoice"
 
-            ET.SubElement(question, "shuffleanswers").text = "true"
-            ET.SubElement(question, "answernumbering").text = "abc"
+    xml.append(f'<question type="{qtype}">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
 
-            labels = ["A", "B", "C", "D"]
+    # ===== QUESTION TEXT =====
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
 
-            for idx, ans in enumerate(q["answers"]):
+    append_images_to_xml(xml, used_images)
 
-                fraction = "100" if labels[idx] in q["correct"] else "0"
+    xml.append('</questiontext>')
 
-                a = ET.SubElement(question, "answer", fraction=fraction, format="html")
-                ET.SubElement(a, "text").text = f"<![CDATA[{clean_text(ans)}]]>"
+    # ===== SINGLE / MULTI =====
+    if is_multi:
+        xml.append('<single>false</single>')
+    else:
+        xml.append('<single>true</single>')
 
-    xml_str = ET.tostring(quiz, encoding="utf-8").decode("utf-8")
+    xml.append('<shuffleanswers>true</shuffleanswers>')
+    xml.append('<answernumbering>abc</answernumbering>')
 
-    return xml_str, stats, [], "Parsing selesai"
+    # ===== FRACTION =====
+    for i, opt in enumerate(options):
+        label = chr(65 + i)
+
+        if is_multi:
+            frac = str(100 / len(correct)) if label in correct else "0"
+        else:
+            frac = "100" if label in correct else "0"
+
+        xml.append(f'<answer fraction="{frac}" format="html">')
+        xml.append(f'<text><![CDATA[{wrap_arabic(opt)}]]></text>')
+        xml.append('</answer>')
+
+    xml.append('</question>')
+
+    if is_multi:
+        stats["MULTIPLE CHOICE SET"] += 1
+    else:
+        stats["MULTIPLE CHOICE"] += 1
+
+
+# =========================
+# BUILD ESSAY
+# =========================
+def build_essay(xml, stats, q_text, ans, q_num,
+                image_map, image_data):
+
+    used_images = {}
+
+    q_text = replace_image_placeholder(
+        q_text, image_map, image_data, used_images
+    )
+
+    xml.append('<question type="essay">')
+    xml.append(f'<name><text>Soal {q_num:02d}</text></name>')
+
+    xml.append('<questiontext format="html">')
+    xml.append(f'<text><![CDATA[{wrap_arabic(q_text)}]]></text>')
+
+    append_images_to_xml(xml, used_images)
+
+    xml.append('</questiontext>')
+
+    xml.append('<generalfeedback format="html">')
+    xml.append(f'<text><![CDATA[{ans}]]></text>')
+    xml.append('</generalfeedback>')
+
+    xml.append('</question>')
+
+    stats["ESSAY"] += 1
