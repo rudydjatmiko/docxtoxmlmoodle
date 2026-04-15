@@ -1,43 +1,30 @@
-from core.detector import (
-    is_question, is_option, is_answer_key,
-    extract_question, extract_option, extract_answer
-)
 from models.question import Question
 
+def is_ans(text):
+    return text.strip().startswith("ANS:")
 
-def parse_lines(lines, logs):
+def extract_answer(text):
+    raw = text.replace("ANS:", "").strip()
+    return [x.strip() for x in raw.split(",")]
+
+def parse(elements):
     questions = []
+    current = Question()
 
-    current = None
+    for el in elements:
+        text = el["text"].strip()
 
-    for line in lines:
-
-        # ===== START QUESTION =====
-        if is_question(line):
-            if current:
-                questions.append(current)
-
-            current = Question()
-            current.text = extract_question(line)
+        if not text:
             continue
 
-        # ===== OPTION =====
-        if is_option(line) and current:
-            current.options.append(extract_option(line))
-            continue
+        if is_ans(text):
+            current.answers = extract_answer(text)
+            current.finalize()
 
-        # ===== ANSWER KEY =====
-        if is_answer_key(line) and current:
-            current.correct = extract_answer(line)
             questions.append(current)
-            current = None
+            current = Question()
             continue
 
-        # ===== MULTILINE =====
-        if current:
-            if current.options:
-                current.options[-1] += "<br/>" + line
-            else:
-                current.text += "<br/>" + line
+        current.add_content(el)
 
     return questions
