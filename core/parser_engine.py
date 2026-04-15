@@ -5,6 +5,11 @@ def extract_answer(text):
     raw = raw.replace("and", ",")
     return [x.strip() for x in raw.split(",")]
 
+
+def is_short(text):
+    return len(text.split()) <= 12
+
+
 def parse(elements):
 
     questions = []
@@ -14,17 +19,36 @@ def parse(elements):
         "answers": []
     }
 
+    buffer = []
+
     for el in elements:
 
         text = el["text"].strip()
-        level = el["level"]
+        level = el.get("level")
 
-        if not text and not el["has_drawing"]:
+        if not text and not el.get("has_drawing"):
             continue
 
-        # ===== ANSWER =====
+        # ===== ANSWER (END OF QUESTION)
         if text.upper().startswith("ANS"):
             current["answers"] = extract_answer(text)
+
+            # 🔥 SPLIT QUESTION vs CHOICES (fallback)
+            if not current["choices"]:
+
+                choices = []
+
+                for line in reversed(current["question"]):
+                    if is_short(line):
+                        choices.insert(0, line)
+                    else:
+                        break
+
+                q_len = len(current["question"]) - len(choices)
+
+                current["choices"] = choices
+                current["question"] = current["question"][:q_len]
+
             questions.append(current)
 
             current = {
@@ -32,14 +56,15 @@ def parse(elements):
                 "choices": [],
                 "answers": []
             }
+
             continue
 
-        # ===== CHOICE =====
+        # ===== CHOICE BY LEVEL
         if level == 1:
             current["choices"].append(text)
             continue
 
-        # ===== QUESTION =====
+        # ===== DEFAULT MASUK KE QUESTION
         current["question"].append(text)
 
     return questions
