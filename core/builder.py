@@ -10,10 +10,7 @@ def build_xml(questions):
 
         q_text = build_html(q["question"])
 
-        # ======================
-        # MC
-        # ======================
-        if q["type"] == "MC" and q["choices"]:
+        if q["type"] == "MC":
 
             is_multi = len(q["answers"]) > 1
 
@@ -25,28 +22,20 @@ def build_xml(questions):
             xml.append('</questiontext>')
 
             xml.append(f"<single>{'false' if is_multi else 'true'}</single>")
-            xml.append("<shuffleanswers>true</shuffleanswers>")
 
             total_correct = len(q["answers"]) if is_multi else 1
 
             for c in q["choices"]:
-
-                if c["label"] in q["answers"]:
-                    fraction = 100 / total_correct
-                else:
-                    fraction = 0
+                fraction = 100 / total_correct if c["label"] in q["answers"] else 0
 
                 xml.append(f"""
-<answer fraction="{fraction}" format="html">
+<answer fraction="{fraction}">
 <text><![CDATA[{c["text"]}]]></text>
 </answer>
 """)
 
             xml.append('</question>')
 
-        # ======================
-        # ESSAY
-        # ======================
         elif q["type"] == "ESSAY":
 
             xml.append('<question type="essay">')
@@ -59,5 +48,4 @@ def build_xml(questions):
             xml.append('</question>')
 
     xml.append('</quiz>')
-
     return "\n".join(xml)
