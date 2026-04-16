@@ -1,17 +1,18 @@
 import zipfile
 from lxml import etree
+from docx import Document
 from docx2python import docx2python
 from utils.xml_parser import get_xml_info
 
 
-def clean_text(text):
+def clean(text):
     return text.strip() if text else ""
 
 
 def read_docx_hybrid(path):
 
     # ======================
-    # XML PARSING (UTAMA)
+    # 1. XML (STRUCTURE)
     # ======================
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml")
@@ -19,43 +20,52 @@ def read_docx_hybrid(path):
     root = etree.fromstring(xml)
     ns = root.nsmap
 
-    elements = []
-
+    xml_data = []
     for p in root.findall(".//w:p", namespaces=ns):
-
         text, level, has_drawing = get_xml_info(p, ns)
-        text = clean_text(text)
 
-        # 🔥 FILTER PARAGRAF KOSONG
-        if not text and not has_drawing:
-            continue
-
-        elements.append({
-            "text": text,
+        xml_data.append({
+            "xml_text": clean(text),
             "level": level,
             "has_drawing": has_drawing
         })
 
     # ======================
-    # FALLBACK TEXT (AMAN)
+    # 2. python-docx (MAIN TEXT)
     # ======================
-    doc = docx2python(path)
-    fallback_lines = [clean_text(l) for l in doc.text.split("\n") if clean_text(l)]
-
-    # 🔥 SAFE MERGE (TIDAK PAKAI INDEX BUTA)
-    fi = 0
-    for el in elements:
-
-        if not el["text"]:
-            if fi < len(fallback_lines):
-                el["text"] = fallback_lines[fi]
-                fi += 1
+    doc = Document(path)
+    pdoc_lines = [clean(p.text) for p in doc.paragraphs if clean(p.text)]
 
     # ======================
-    # DEBUG (OPSIONAL)
+    # 3. docx2python (FALLBACK)
     # ======================
-    # print untuk cek mismatch
-    # for i, el in enumerate(elements):
-    #     print(i, el["level"], el["text"])
+    doc2 = docx2python(path)
+    fallback_lines = [clean(l) for l in doc2.text.split("\n") if clean(l)]
 
-    return elements
+    # ======================
+    # 4. MERGE SMART
+    # ======================
+    merged = []
+    i1 = i2 = 0
+
+    for el in xml_data:
+
+        text = el["xml_text"]
+
+        if i1 < len(pdoc_lines):
+            text = pdoc_lines[i1]
+            i1 += 1
+        elif i2 < len(fallback_lines):
+            text = fallback_lines[i2]
+            i2 += 1
+
+        if not text:
+            continue
+
+        merged.append({
+            "text": text,
+            "level": el["level"],
+            "has_drawing": el["has_drawing"]
+        })
+
+    return merged
