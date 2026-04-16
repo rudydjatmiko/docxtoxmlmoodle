@@ -1,156 +1,68 @@
-import sys
-import os
-
-# ======================
-# FIX PATH
-# ======================
-BASE_DIR = os.path.dirname(__file__)
-sys.path.insert(0, BASE_DIR)
-
-# ======================
-# IMPORT
-# ======================
 import streamlit as st
-from docx import Document
-import zipfile
-
 from parser import run_parser
 from core.builder import build_xml
 
-# ======================
-# CONFIG
-# ======================
-st.set_page_config(page_title="DOCX to XML", layout="centered")
+st.set_page_config(page_title="DOCX to XML Moodle", layout="wide")
 
-st.title("DOCX → XML Moodle")
+st.title("📄 DOCX → XML Moodle Converter")
 
-# ======================
-# STATE
-# ======================
-if "xml_result" not in st.session_state:
-    st.session_state.xml_result = None
+uploaded = st.file_uploader("Upload file DOCX", type=["docx"])
 
-if "stats" not in st.session_state:
-    st.session_state.stats = None
-
-# ======================
-# UPLOAD
-# ======================
-uploaded_file = st.file_uploader("", type=["docx"])
-
-# ======================
-# HELPER
-# ======================
-def save_temp(file):
-    path = os.path.join(BASE_DIR, "temp.docx")
-    with open(path, "wb") as f:
-        f.write(file.read())
-    return path
-
-# ======================
-# BUTTON
-# ======================
 col1, col2, col3 = st.columns(3)
 
-process_btn = col1.button("Proses")
-raw_btn = col2.button("RAW")
-xml_btn = col3.button("XML")
+process_btn = col1.button("🚀 Convert")
+debug_btn = col2.button("🐞 Debug")
+reset_btn = col3.button("🔄 Reset")
 
-# ======================
-# DEBUG RAW (python-docx)
-# ======================
-if uploaded_file is not None and raw_btn:
-    try:
-        path = save_temp(uploaded_file)
-        doc = Document(path)
+if reset_btn:
+    st.experimental_rerun()
 
-        lines = [p.text for p in doc.paragraphs]
-        st.text_area("", "\n".join(lines), height=500)
+if uploaded and process_btn:
 
-    except Exception as e:
-        st.error(str(e))
+    with open("temp.docx", "wb") as f:
+        f.write(uploaded.read())
 
-# ======================
-# DEBUG XML (ASLI DOCX)
-# ======================
-if uploaded_file is not None and xml_btn:
-    try:
-        path = save_temp(uploaded_file)
+    questions, elements = run_parser("temp.docx")
 
-        with zipfile.ZipFile(path) as z:
-            xml = z.read("word/document.xml").decode("utf-8")
+    # ======================
+    # STATISTIK
+    # ======================
+    mc = 0
+    multi = 0
+    essay = 0
 
-        st.text_area("", xml, height=500)
-
-    except Exception as e:
-        st.error(str(e))
-
-# ======================
-# PROCESS
-# ======================
-if uploaded_file is not None and process_btn:
-    try:
-        path = save_temp(uploaded_file)
-
-        questions = run_parser(path)
-
-        # ======================
-        # HITUNG STATISTIK
-        # ======================
-        mc = 0
-        mc_multi = 0
-        essay = 0
-
-        for q in questions:
-            if q["choices"]:
-                if len(q["answers"]) > 1:
-                    mc_multi += 1
-                else:
-                    mc += 1
+    for q in questions:
+        if q["type"] == "ESSAY":
+            essay += 1
+        elif q["type"] == "MC":
+            if len(q["answers"]) > 1:
+                multi += 1
             else:
-                essay += 1
+                mc += 1
 
-        st.session_state.stats = {
-            "mc": mc,
-            "mc_multi": mc_multi,
-            "essay": essay
-        }
+    st.success(f"MC: {mc} | Multi: {multi} | Essay: {essay}")
 
-        # ======================
-        # BUILD XML
-        # ======================
-        xml_output = build_xml(questions)
-        st.session_state.xml_result = xml_output
-
-    except Exception as e:
-        st.error(str(e))
-
-# ======================
-# TAMPILKAN STATISTIK
-# ======================
-if st.session_state.stats:
-
-    st.markdown("### Statistik Soal")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("MC", st.session_state.stats["mc"])
-    col2.metric("Multi Answer", st.session_state.stats["mc_multi"])
-    col3.metric("Essay", st.session_state.stats["essay"])
-
-# ======================
-# RESULT XML
-# ======================
-if st.session_state.xml_result:
-
-    file_name = os.path.splitext(uploaded_file.name)[0] + ".xml"
+    xml = build_xml(questions)
 
     st.download_button(
-        "Download XML",
-        data=st.session_state.xml_result,
-        file_name=file_name,
-        mime="text/xml"
+        "⬇️ Download XML",
+        xml,
+        file_name=uploaded.name.replace(".docx", ".xml")
     )
 
-    with st.expander("Preview"):
-        st.text_area("", st.session_state.xml_result, height=400)
+    st.code(xml, language="xml")
+
+# ======================
+# DEBUG RAW
+# ======================
+if uploaded and debug_btn:
+
+    with open("temp.docx", "wb") as f:
+        f.write(uploaded.read())
+
+    _, elements = run_parser("temp.docx")
+
+    st.subheader("🐞 RAW SCAN (Hybrid Reader)")
+
+    for i, el in enumerate(elements):
+        st.text(f"{i+1:03d} | L{el['level']} | {el['text']}")
