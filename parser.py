@@ -4,4 +4,5 @@ from core.parser_engine import parse
 
 def run_parser(path):
     elements = read_docx_hybrid(path)
-    return parse(elements), elements
+    questions = parse(elements)
+    return questions, elements
