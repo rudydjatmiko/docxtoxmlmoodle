@@ -1,6 +1,3 @@
 streamlit
+mammoth
 python-docx
-lxml
-doc2python
-docx2python
-Pillow
